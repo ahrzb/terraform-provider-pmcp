@@ -1,0 +1,5 @@
+# This repo is edited from Windows and consumed from WSL and Linux. Without this, a Windows
+# checkout with core.autocrlf=true gives CRLF line endings, which Go tooling tolerates but
+# generated shell and Nix files do not.
+* text=auto eol=lf
+*.png binary
