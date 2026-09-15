@@ -189,6 +189,22 @@
                   allow = [ "reader" ];
                   approval = [ "writer" ];
                 };
+                # Both token kinds, and both halves of the reference rule: `tunnel-one` is
+                # declared above so it must emit an interpolated reference, while
+                # `unmanaged-elsewhere` is not, so it must emit the bare slug — the shape an
+                # operator host uses when it wants credentials for apps it does not manage.
+                pmcp.tokens.tunnel-one-a = {
+                  app = "tunnel-one";
+                  expiresIn = "never";
+                };
+                pmcp.tokens.unmanaged-a = {
+                  app = "unmanaged-elsewhere";
+                  rotation = 1;
+                };
+                pmcp.tokens.bot-key-a = {
+                  agent = "bot";
+                  expiresIn = 7776000;
+                };
                 pmcp.extraConfig.resource.pmcp_proxy_app.proxy-one.headers_wo = {
                   Authorization = "Bearer $TOKEN";
                 };

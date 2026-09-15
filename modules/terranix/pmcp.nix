@@ -189,6 +189,51 @@ let
     };
   };
 
+  # `pmcp_token` (§22.2). Unlike every other resource here, a token's whole point is a value the
+  # hub returns exactly once and never again, so the interesting attributes are computed: the
+  # consumer reads `pmcp_token.<name>.token` out of an output, and that plaintext lands in state.
+  # `TF_ENCRYPTION` is therefore mandatory wherever this option is used.
+  tokenType = types.submodule {
+    options = {
+      app = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          The app slug this token authenticates, for an app (`pmcp_app_`) token. Exactly one of
+          `app`/`agent` is set; the hub refuses a token that names neither or both.
+
+          The slug may name an app this configuration does NOT declare — a tunnelled app that
+          already exists on the hub, managed by hand or by `mcps.yaml`. That is the normal case
+          for a consumer that only wants credentials: see the reference rule below.
+        '';
+      };
+      agent = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "The agent slug this token authenticates, for an agent (`pmcp_agt_`) key.";
+      };
+      expiresIn = mkOption {
+        type = types.nullOr (types.either types.ints.positive (types.enum [ "never" ]));
+        default = null;
+        description = ''
+          Lifetime in seconds, or the literal `"never"`. Omitted takes the hub's own default,
+          which differs by kind — 90 days for an agent key, no expiry for an app token (§5/§8).
+          Changing it forces replacement: the hub has no rotate op, so a new lifetime is a new
+          credential.
+        '';
+      };
+      rotation = mkOption {
+        type = types.nullOr types.int;
+        default = null;
+        description = ''
+          An arbitrary counter whose only job is to force replacement when bumped — the
+          declarative spelling of "rotate this credential now". Carries no meaning to the hub and
+          is never sent to it.
+        '';
+      };
+    };
+  };
+
   # --- emission ---------------------------------------------------------------------------------
 
   commonAppFields = app: {
@@ -248,6 +293,52 @@ let
     else
       throw "pmcp terranix module: grant references agent \"${slug}\", which is not declared under pmcp.agents";
 
+  # A token's `app`/`agent` may name something this configuration declares, or something that
+  # only exists on the hub. Both are legitimate and they need different wire values:
+  #
+  #   declared here  → an interpolated reference, so the graph creates the app before its token
+  #                    and destroys them in the right order (§22.4's reference rule).
+  #   not declared   → the bare slug. There is nothing to order against, and throwing would make
+  #                    "manage credentials for apps I do not manage" unrepresentable — which is
+  #                    the main reason to reach for this option at all (an operator host wanting
+  #                    tokens for long-lived tunnelled apps it did not create).
+  #
+  # This is deliberately laxer than `appRef`/`agentRef` above, where a bare slug really is an
+  # error: a grant's ordering is not optional.
+  tokenAppRef =
+    slug:
+    if cfg.tunnelApps ? ${slug} then
+      "\${pmcp_tunnel_app.${resourceName slug}.slug}"
+    else if cfg.proxyApps ? ${slug} then
+      "\${pmcp_proxy_app.${resourceName slug}.slug}"
+    else
+      slug;
+
+  tokenAgentRef =
+    slug:
+    if cfg.agents ? ${slug} then "\${pmcp_agent.${resourceName slug}.slug}" else slug;
+
+  tokenResources = lib.mapAttrs' (
+    name: token:
+    let
+      named = lib.filter (k: token.${k} != null) [
+        "app"
+        "agent"
+      ];
+    in
+    if named == [ ] then
+      throw "pmcp terranix module: token \"${name}\" sets neither `app` nor `agent`; exactly one is required"
+    else if lib.length named == 2 then
+      throw "pmcp terranix module: token \"${name}\" sets both `app` and `agent`; exactly one is required"
+    else
+      lib.nameValuePair (resourceName name) (dropNulls {
+        app = if token.app == null then null else tokenAppRef token.app;
+        agent = if token.agent == null then null else tokenAgentRef token.agent;
+        expires_in = token.expiresIn;
+        inherit (token) rotation;
+      })
+  ) cfg.tokens;
+
   grantResources = lib.foldl' (
     acc: agentSlug:
     acc
@@ -275,6 +366,7 @@ let
       pmcp_proxy_app = if proxyResources == { } then null else proxyResources;
       pmcp_agent = if agentResources == { } then null else agentResources;
       pmcp_grant = if grantResources == { } then null else grantResources;
+      pmcp_token = if tokenResources == { } then null else tokenResources;
     };
   };
 
@@ -303,7 +395,15 @@ in
 {
   options.pmcp = {
     enable = mkEnableOption "hub resources managed through the pmcp provider" // {
-      default = cfg.tunnelApps != { } || cfg.proxyApps != { } || cfg.agents != { } || cfg.grants != { };
+      # `tokens` counts here too, and it is the one that can be the ONLY thing set: a host that
+      # wants credentials for apps it does not manage declares tokens and nothing else. Leaving
+      # it out of this disjunction made that configuration silently emit no provider block.
+      default =
+        cfg.tunnelApps != { }
+        || cfg.proxyApps != { }
+        || cfg.agents != { }
+        || cfg.grants != { }
+        || cfg.tokens != { };
     };
 
     sourceAddress = mkOption {
@@ -334,6 +434,27 @@ in
       type = types.attrsOf (types.attrsOf grantType);
       default = { };
       description = "`pmcp_grant` resources, keyed by agent slug then app slug — mirroring `mcps.yaml`'s own shape.";
+    };
+
+    tokens = mkOption {
+      type = types.attrsOf tokenType;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          # One generation of a credential for an app this configuration does not manage.
+          proton-mail-read-a = { app = "proton-mail-read"; };
+        }
+      '';
+      description = ''
+        `pmcp_token` resources, keyed by the RESOURCE name rather than a slug — unlike every
+        other option here. A slug can carry several live tokens at once (the hub enforces no
+        uniqueness on `(kind, ref_id)`), and overlapping generations are the supported way to
+        rotate without a gap, so the key has to name the generation: `foo-a`, `foo-b`.
+
+        **The plaintext lands in state.** A token is returned exactly once and cannot be read
+        back, so the provider keeps it — which makes `TF_ENCRYPTION` a requirement rather than a
+        preference wherever this option is non-empty.
+      '';
     };
 
     extraConfig = mkOption {
