@@ -105,7 +105,9 @@ which is private). Planned surface:
 | resource | `pmcp_proxy_app` | upstream MCP endpoints; carries write-only `headers_wo` |
 | resource | `pmcp_agent` | consumer identities |
 | resource | `pmcp_grant` | `(agent, app)` → role sets, split `allow` / `approval` |
+| resource | `pmcp_token` | app tokens and agent keys; the value is in state, see below |
 | data source | `pmcp_app`, `pmcp_agent` | singular lookup by slug |
+| data source | `pmcp_tokens` | inventory, including tokens this provider did not issue |
 
 Also pending: the terranix module (`terranixModules.pmcp`), the coverage oracle
 (`apps.coverage-check`), and the acceptance rig (`apps.acceptance`).
@@ -115,10 +117,13 @@ Three design decisions worth knowing before contributing, because each reverses 
 - **Tunnel and proxy apps are separate resource types**, not one type with a `kind`. Proxy-only
   fields are meaningless on a tunnelled app and the hub rejects them, so invalid combinations
   should fail at plan time rather than mid-apply.
-- **There is no token resource.** Issued credentials are returned exactly once and cannot be read
-  back, so a managed resource would persist a plaintext secret in state forever. OpenTofu offers
-  no way out: write-only attributes cannot carry a *returned* value, and ephemeral resources
-  re-open and would orphan a credential per run. Tokens stay imperative.
+- **`pmcp_token` keeps the issued secret in state.** Credentials are returned exactly once and
+  cannot be read back, so there is no alternative: write-only attributes cannot carry a
+  *returned* value, and an ephemeral resource would re-open and orphan a credential every run.
+  This is the `aws_iam_access_key` shape, and it means state encryption is a requirement rather
+  than a nicety. Tokens issued by hand are unaffected — the provider destroys only rows in its
+  own state, so ad-hoc and managed credentials coexist. Destroying a `pmcp_agent`, however,
+  revokes *every* token for that agent, including ones this provider never created.
 - **Upstream headers live on `pmcp_proxy_app`, not their own resource.** Changing an app's `auth`
   mode wipes the hub-side credential; a separate resource would show no diff when that happens —
   write-only values are null in plan and state by construction — so the headers would never be
