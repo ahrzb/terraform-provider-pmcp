@@ -300,9 +300,23 @@ func rolesToArgs(ctx context.Context, in types.Map) (map[string]pmcp.RoleFamilie
 	}
 	var values map[string]roleFamiliesValue
 	diags := in.ElementsAs(ctx, &values, false)
+	if diags.HasError() {
+		return nil, diags
+	}
 	out := make(map[string]pmcp.RoleFamilies, len(values))
 	for name, v := range values {
-		out[name] = pmcp.RoleFamilies{Tools: v.Tools, Prompts: v.Prompts, Resources: v.Resources}
+		var families pmcp.RoleFamilies
+		var d diag.Diagnostics
+		// An unset family is unknown here, not empty — see roleFamiliesValue. patternsOf maps
+		// both null and unknown to nil, and RoleFamilies' `omitempty` tags then drop the key, so
+		// what reaches the hub matches its own canonical rendering and never diffs.
+		families.Tools, d = patternsOf(ctx, v.Tools)
+		diags.Append(d...)
+		families.Prompts, d = patternsOf(ctx, v.Prompts)
+		diags.Append(d...)
+		families.Resources, d = patternsOf(ctx, v.Resources)
+		diags.Append(d...)
+		out[name] = families
 	}
 	return out, diags
 }

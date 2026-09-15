@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -56,12 +57,41 @@ var roleFamiliesAttrTypes = map[string]attr.Type{
 	"resources": types.ListType{ElemType: types.StringType},
 }
 
-// roleFamiliesValue is roleFamiliesAttrTypes' Go-native counterpart, used only to drive the
-// framework's reflection-based conversion in rolesFrom.
+// roleFamiliesValue is roleFamiliesAttrTypes' Go-native counterpart, driving the framework's
+// reflection-based conversion in both directions.
+//
+// The three fields are `types.List` and not `[]string` for a reason a unit test did not catch
+// and a real `tofu apply` did: the schema declares each family Optional+Computed, so a role that
+// configures only `tools` presents `prompts` and `resources` as **unknown** during apply, and a
+// `[]string` target cannot represent unknown — the framework fails the whole conversion with
+// "Received unknown value, however the target type cannot handle unknown values". Optional+
+// Computed is the right schema (it is what lets the hub omit an empty family without an
+// inconsistent-result error), so the conversion is what has to cope.
 type roleFamiliesValue struct {
-	Tools     []string `tfsdk:"tools"`
-	Prompts   []string `tfsdk:"prompts"`
-	Resources []string `tfsdk:"resources"`
+	Tools     types.List `tfsdk:"tools"`
+	Prompts   types.List `tfsdk:"prompts"`
+	Resources types.List `tfsdk:"resources"`
+}
+
+// patternList renders one family's wire patterns. A family the hub omitted becomes a null list
+// rather than an empty one: "this role declares no prompts" is what the hub said, and an empty
+// list would claim it declared an empty set.
+func patternList(ctx context.Context, in []string) (types.List, diag.Diagnostics) {
+	if in == nil {
+		return types.ListNull(types.StringType), nil
+	}
+	return types.ListValueFrom(ctx, types.StringType, in)
+}
+
+// patternsOf is patternList's inverse: a null or unknown list yields nil, which rolesToArgs
+// omits from the wire object so an unset family is never sent as an empty array.
+func patternsOf(ctx context.Context, in types.List) ([]string, diag.Diagnostics) {
+	if in.IsNull() || in.IsUnknown() {
+		return nil, nil
+	}
+	out := make([]string, 0, len(in.Elements()))
+	diags := in.ElementsAs(ctx, &out, false)
+	return out, diags
 }
 
 // rolesFrom converts app_get's roles map to the schema's map(object) shape. A nil/empty wire
@@ -69,13 +99,25 @@ type roleFamiliesValue struct {
 // result, so absence of any role is an observed fact, not an unknown one — the same reasoning
 // redactFrom applies to the redaction maps.
 func rolesFrom(ctx context.Context, in map[string]pmcp.RoleFamilies) (types.Map, error) {
+	nullMap := types.MapNull(types.ObjectType{AttrTypes: roleFamiliesAttrTypes})
 	values := make(map[string]roleFamiliesValue, len(in))
 	for name, families := range in {
-		values[name] = roleFamiliesValue{Tools: families.Tools, Prompts: families.Prompts, Resources: families.Resources}
+		var v roleFamiliesValue
+		var diags diag.Diagnostics
+		if v.Tools, diags = patternList(ctx, families.Tools); diags.HasError() {
+			return nullMap, fmt.Errorf("%v", diags)
+		}
+		if v.Prompts, diags = patternList(ctx, families.Prompts); diags.HasError() {
+			return nullMap, fmt.Errorf("%v", diags)
+		}
+		if v.Resources, diags = patternList(ctx, families.Resources); diags.HasError() {
+			return nullMap, fmt.Errorf("%v", diags)
+		}
+		values[name] = v
 	}
 	out, diags := types.MapValueFrom(ctx, types.ObjectType{AttrTypes: roleFamiliesAttrTypes}, values)
 	if diags.HasError() {
-		return types.MapNull(types.ObjectType{AttrTypes: roleFamiliesAttrTypes}), fmt.Errorf("%v", diags)
+		return nullMap, fmt.Errorf("%v", diags)
 	}
 	return out, nil
 }
