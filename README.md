@@ -124,6 +124,12 @@ Three design decisions worth knowing before contributing, because each reverses 
   than a nicety. Tokens issued by hand are unaffected — the provider destroys only rows in its
   own state, so ad-hoc and managed credentials coexist. Destroying a `pmcp_agent`, however,
   revokes *every* token for that agent, including ones this provider never created.
+  Rotation is a replacement, and `create_before_destroy` is a guarantee rather than an accident:
+  `Create` revokes nothing and `Delete` revokes exactly its own id, so overlapping generations are
+  a supported state and a consumer can be switched over between the two legs. **Delivering the
+  value to a consumer is out of scope** — and note that nothing hub-side can tell you which
+  credential a live consumer is using, `last_used_at` included: it is stamped before the hub
+  checks whether the app exists or is archived, it is throttled, and it carries no attribution.
 - **Upstream headers live on `pmcp_proxy_app`, not their own resource.** Changing an app's `auth`
   mode wipes the hub-side credential; a separate resource would show no diff when that happens —
   write-only values are null in plan and state by construction — so the headers would never be
