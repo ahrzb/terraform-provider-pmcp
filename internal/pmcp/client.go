@@ -20,7 +20,7 @@ import (
 const Timeout = 30 * time.Second
 
 // ErrNotFound is returned when an object the caller named does not exist. Resource Read paths
-// turn this into state removal rather than an error.
+// turn this into state removal rather than an error, and Delete paths treat it as success.
 var ErrNotFound = errors.New("pmcp: not found")
 
 // RPCError is a JSON-RPC error returned by the hub. Code is the wire code; the hub pins six of
@@ -37,6 +37,28 @@ func (e *RPCError) Error() string {
 // MethodNotFound reports whether the hub rejected the operation as unknown, which in practice
 // means the hub is older than this provider.
 func (e *RPCError) MethodNotFound() bool { return e.Code == -32601 }
+
+// notFoundMessage is the hub's absence sentence. The hub does NOT give absence its own wire
+// code: `absent()` in server/src/admin.ts builds `invalid("no such <family> in this
+// namespace")`, so it arrives as -32602 — the same code as a malformed slug or a bad endpoint.
+// Matching the message is therefore the only way to tell "gone" from "you asked wrongly", and
+// the distinction is load-bearing: the first means RemoveResource, the second must surface as an
+// error. Kept as a prefix match on the stable part of the sentence, since -32602 messages can
+// arrive joined with `; ` when a call produces several violations.
+const notFoundMessage = "no such "
+
+// IsNotFound reports whether err is the hub saying the named object does not exist.
+func IsNotFound(err error) bool {
+	if errors.Is(err, ErrNotFound) {
+		return true
+	}
+	var rpc *RPCError
+	if !errors.As(err, &rpc) || rpc.Code != -32602 {
+		return false
+	}
+	return strings.HasPrefix(rpc.Message, notFoundMessage) &&
+		strings.Contains(rpc.Message, "in this namespace")
+}
 
 // HTTPError is a transport-level failure: the request never reached the MCP dispatcher.
 type HTTPError struct {

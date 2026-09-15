@@ -99,12 +99,26 @@ func (p *hubProvider) Configure(ctx context.Context, req provider.ConfigureReque
 	resp.DataSourceData = client
 }
 
-// Resources and DataSources are empty until the §22 schema is implemented. Returning nil is
-// correct rather than a placeholder: a provider that advertises a resource it cannot serve is
-// worse than one that advertises none.
-func (p *hubProvider) Resources(_ context.Context) []func() resource.Resource { return nil }
+// The §22.4 surface: five resources and three data sources. `pmcp_token` is listed with the
+// resources it is issued against rather than beside the apps, because its lifecycle is the odd
+// one — see §22.2.
+func (p *hubProvider) Resources(_ context.Context) []func() resource.Resource {
+	return []func() resource.Resource{
+		NewTunnelAppResource,
+		NewProxyAppResource,
+		NewAgentResource,
+		NewGrantResource,
+		NewTokenResource,
+	}
+}
 
-func (p *hubProvider) DataSources(_ context.Context) []func() datasource.DataSource { return nil }
+func (p *hubProvider) DataSources(_ context.Context) []func() datasource.DataSource {
+	return []func() datasource.DataSource{
+		NewAppDataSource,
+		NewAgentDataSource,
+		NewTokensDataSource,
+	}
+}
 
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
