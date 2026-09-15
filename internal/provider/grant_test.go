@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ahrzb/terraform-provider-pmcp/internal/pmcp"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -228,6 +229,45 @@ func TestGrantValidateConfigAcceptsDisjointNonEmptySets(t *testing.T) {
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("expected no error, got %v", resp.Diagnostics)
+	}
+}
+
+// TestGrantValidateConfigRejectsEmptyAllowBesideNonEmptyApproval is a regression test for a
+// reproduced perpetual diff: `allow` and `approval` are both Optional and not Computed, so
+// OpenTofu requires state to echo config exactly, and `[]` is a different value from null. The
+// hub's wire sends one flat role list, so Read cannot tell "no allow roles" (an explicit `[]`)
+// apart from "allow omitted" (null) — both reconstruct as null — which would make an explicit
+// `allow = []` beside a non-empty `approval` re-plan `null -> []` forever.
+func TestGrantValidateConfigRejectsEmptyAllowBesideNonEmptyApproval(t *testing.T) {
+	res := &grantResource{}
+	cfg := configFor(t, res, &grantResourceModel{
+		Agent: types.StringValue("bot"), App: types.StringValue("app1"),
+		Allow:    types.SetValueMust(types.StringType, []attr.Value{}),
+		Approval: mustSet(t, "reviewer"),
+	})
+	var resp resource.ValidateConfigResponse
+	res.ValidateConfig(context.Background(), resource.ValidateConfigRequest{Config: cfg}, &resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error for allow = [] beside a non-empty approval — [] and omitted round-trip identically and would perpetually re-plan")
+	}
+}
+
+// TestGrantValidateConfigAcceptsOmittedAllowBesideNonEmptyApproval is the twin acceptance case:
+// omitting `allow` entirely (null) beside a non-empty `approval` says the same thing as an
+// empty allow set, without the perpetual-diff hazard, and must be allowed.
+func TestGrantValidateConfigAcceptsOmittedAllowBesideNonEmptyApproval(t *testing.T) {
+	res := &grantResource{}
+	cfg := configFor(t, res, &grantResourceModel{
+		Agent: types.StringValue("bot"), App: types.StringValue("app1"),
+		Allow:    types.SetNull(types.StringType),
+		Approval: mustSet(t, "reviewer"),
+	})
+	var resp resource.ValidateConfigResponse
+	res.ValidateConfig(context.Background(), resource.ValidateConfigRequest{Config: cfg}, &resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("expected no error when allow is omitted beside a non-empty approval, got %v", resp.Diagnostics)
 	}
 }
 

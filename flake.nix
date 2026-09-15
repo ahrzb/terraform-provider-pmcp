@@ -25,9 +25,15 @@
           inherit version;
           src = ./.;
 
-          # Computed by `nix build .#default -L` under WSL (x86_64-linux). Regenerate the same
-          # way after any go.mod change: the mismatch error's `got:` line is the new value.
-          vendorHash = "sha256-q9Blhf+SNX+dY74Tm/qYrKFNqRFAzrhg2+vW/NF4JsU=";
+          # Computed by `nix build .#default -L` under WSL (x86_64-linux); the mismatch error's
+          # `got:` line is the new value.
+          #
+          # Regenerate after any change to what the code IMPORTS, not only after a go.mod change.
+          # buildGoModule vendors the packages actually imported, so pulling in another
+          # subpackage of a module already in go.mod — `resource/schema/stringplanmodifier`, say
+          # — moves this hash while go.mod and go.sum stay byte-identical. That is exactly how
+          # this value went stale once already.
+          vendorHash = "sha256-nZqkF9Gfp5XtPCZi5+tijoDNMAaVF8GWnlllucJtUFA=";
 
           subPackages = [ "." ];
           # Registry providers are built by goreleaser with cgo off; matching that keeps the
@@ -106,6 +112,11 @@
             preCheck = ''
               go vet ./...
             '';
+            # `subPackages = [ ]` now builds two `package main`s — this one and
+            # cmd/coverage-check's — into $out/bin. `provider`'s inherited postInstall assumes
+            # exactly one (it `mv`s it out, then `rmdir`s bin) and fails once a second binary is
+            # present; this check never needed the provider plugin-directory layout anyway.
+            postInstall = "";
           });
 
           # §22.7: "checks.terranix evaluates the module against a sample configuration and
@@ -123,16 +134,25 @@
               # terranix flake input of its own — matching modules/terranix/pmcp.nix, which also
               # has none. A real consumer (e.g. `shed`) gets the actual terranix core instead.
               terranixCore = {
-                options = pkgs.lib.genAttrs [
-                  "resource"
-                  "data"
-                  "provider"
-                  "terraform"
-                  "output"
-                  "variable"
-                  "locals"
-                  "module"
-                ] (_: pkgs.lib.mkOption { type = pkgs.lib.types.attrsOf pkgs.lib.types.anything; default = { }; });
+                options =
+                  pkgs.lib.genAttrs
+                    [
+                      "resource"
+                      "data"
+                      "provider"
+                      "terraform"
+                      "output"
+                      "variable"
+                      "locals"
+                      "module"
+                    ]
+                    (
+                      _:
+                      pkgs.lib.mkOption {
+                        type = pkgs.lib.types.attrsOf pkgs.lib.types.anything;
+                        default = { };
+                      }
+                    );
               };
 
               # Exercises every typed option once: both app trees, the roles bare-list sugar
@@ -140,7 +160,9 @@
               # reaching into the already-typed proxy app to set `headers_wo` — the field this
               # module deliberately has no `mkOption` for (§22.2, §22.7).
               sample = {
-                pmcp.agents.bot = { description = "sample agent"; };
+                pmcp.agents.bot = {
+                  description = "sample agent";
+                };
                 pmcp.tunnelApps.tunnel-one = {
                   description = "tunnel sample";
                   archived = false;
@@ -240,6 +262,49 @@
             fi
             touch $out
           '';
+          # §22.5's parity oracle: `checks.coverage-check` gates this repo's own `nix flake
+          # check` against its pinned coverage/admin-ops.json (§22.5's "provider repo's own CI,
+          # against its own pinned fixture"), which is why the hub can't be reached as a flake
+          # input instead — both repos are private, and coverage/staged.json exists precisely so
+          # the two land a change in separate commits rather than needing a circular input.
+          # `-strict` enables the staged-entry expiry rule; this is the one invocation where
+          # that rule is meant to run (§22.5, "Gating here, without a deadlock").
+          coverage-check =
+            let
+              coverageCheckBin = provider.overrideAttrs (_old: {
+                pname = "terraform-provider-pmcp-coverage-check";
+                subPackages = [ "cmd/coverage-check" ];
+                # `provider`'s postInstall relocates a `terraform-provider-pmcp` binary into the
+                # plugin-directory layout `withPlugins` expects; this build produces a plain
+                # `coverage-check` binary instead, so that step does not apply here.
+                postInstall = "";
+              });
+            in
+            pkgs.runCommand "terraform-provider-pmcp-coverage-check" { } ''
+              ${coverageCheckBin}/bin/coverage-check -strict \
+                -staged ${./coverage/staged.json} \
+                ${./coverage/admin-ops.json}
+              touch $out
+            '';
+        };
+
+        # §22.5's parity oracle, as a flake app taking the fixture as an argument — what the
+        # hub's own CI runs against its own working-tree contract:
+        #   nix run github:ahrzb/terraform-provider-pmcp#coverage-check -- ./contracts/admin-ops.json
+        # Deliberately not `-strict`: the staged-entry expiry rule belongs only to this repo's
+        # own `checks.coverage-check` above (§22.5) — running it here would deadlock the two
+        # repos on which one lands its half of a two-commit change first.
+        apps.coverage-check = {
+          type = "app";
+          program = "${pkgs.writeShellScript "coverage-check" ''
+            exec ${
+              provider.overrideAttrs (_old: {
+                pname = "terraform-provider-pmcp-coverage-check";
+                subPackages = [ "cmd/coverage-check" ];
+                postInstall = "";
+              })
+            }/bin/coverage-check -staged ${./coverage/staged.json} "$@"
+          ''}";
         };
 
         formatter = pkgs.nixfmt-tree;

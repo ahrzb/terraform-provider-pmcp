@@ -53,10 +53,6 @@ func TestDecideHeadersPlan(t *testing.T) {
 			planVersion: nil, appliedVersion: nil, wantMark: false,
 		},
 		{
-			name: "oauth to oauth, unreachable but safe", auth: "oauth", pairConfigured: false,
-			planVersion: nil, appliedVersion: nil, wantMark: false,
-		},
-		{
 			name: "pair removed while applied version non-null", auth: "headers", pairConfigured: false,
 			planVersion: nil, appliedVersion: int64Ptr(3), wantErr: true,
 		},
@@ -328,6 +324,69 @@ func TestProxyAppCreateWithHeadersCallsCreateThenSetUpstreamAuth(t *testing.T) {
 	}
 }
 
+// TestProxyAppCreateSetUpstreamAuthFailureKeepsCreatedAppWithNullAppliedVersion guards §22.4's
+// partial-apply rule against the exact silent gate the review flagged: if
+// model.HeadersAppliedVersion = plan.HeadersVersion were ever assigned before knowing whether
+// app_set_upstream_auth succeeds (instead of only on its success), this test — not the 51
+// pre-existing ones — is what would catch it. On failure the app_create'd app must stay in
+// state (a rejected credential push does not undo the app) while headers_applied_version stays
+// null, so the next apply retries the credential instead of reporting false convergence.
+func TestProxyAppCreateSetUpstreamAuthFailureKeepsCreatedAppWithNullAppliedVersion(t *testing.T) {
+	f := &fakeHub{t: t, reply: func(op string, args map[string]any) (any, *fakeRPCError) {
+		switch op {
+		case "app_create":
+			return map[string]any{"app": pmcp.AppRow{
+				Slug: "app1", Kind: "proxy", Name: "app1", Auth: "headers",
+				Endpoint: "https://upstream.example/mcp", LogBodies: false,
+				Roles: map[string]pmcp.RoleFamilies{}, Redact: map[string][]string{}, RedactResults: map[string][]string{},
+			}}, nil
+		case "app_set_upstream_auth":
+			return nil, &fakeRPCError{Code: -32000, Message: "upstream unreachable"}
+		default:
+			t.Fatalf("unexpected op %q", op)
+			return nil, nil
+		}
+	}}
+	client := testClient(t, f)
+	res := NewProxyAppResource()
+	configure(t, res, client)
+
+	plan := baseProxyModel()
+	plan.Name, plan.Description, plan.Archived = types.StringUnknown(), types.StringUnknown(), types.BoolUnknown()
+	plan.LogBodies = types.BoolUnknown()
+	plan.Redact = types.MapUnknown(types.ListType{ElemType: types.StringType})
+	plan.RedactResults = types.MapUnknown(types.ListType{ElemType: types.StringType})
+	plan.ForwardIdentity = types.BoolUnknown()
+	plan.Roles = types.MapUnknown(types.ObjectType{AttrTypes: roleFamiliesAttrTypes})
+	plan.Capabilities = types.SetUnknown(types.StringType)
+	plan.HeadersVersion = types.Int64Value(1)
+	plan.HeadersAppliedVersion = types.Int64Unknown()
+
+	cfgModel := plan
+	cfgModel.HeadersWo = types.MapValueMust(types.StringType, map[string]attr.Value{"Authorization": types.StringValue("Bearer secret")})
+
+	createResp := &resource.CreateResponse{State: emptyState(t, res)}
+	res.Create(context.Background(), resource.CreateRequest{
+		Plan:   planFor(t, res, &plan),
+		Config: configFor(t, res, &cfgModel),
+	}, createResp)
+
+	if !createResp.Diagnostics.HasError() {
+		t.Fatal("expected an error diagnostic when app_set_upstream_auth fails")
+	}
+
+	var state proxyAppModel
+	if diags := createResp.State.Get(context.Background(), &state); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if state.Slug.ValueString() != "app1" {
+		t.Errorf("slug = %q, want the app_create'd app kept in state despite the later failure (§22.4 partial apply)", state.Slug.ValueString())
+	}
+	if !state.HeadersAppliedVersion.IsNull() {
+		t.Errorf("headers_applied_version = %v, want null after a failed app_set_upstream_auth — the credential was never applied, so it must be retried", state.HeadersAppliedVersion)
+	}
+}
+
 func TestProxyAppUpdateHeadersToOauthCallsAppUpdateOnlyAndClearsAppliedVersion(t *testing.T) {
 	f := &fakeHub{t: t, reply: func(op string, args map[string]any) (any, *fakeRPCError) {
 		if op != "app_update" {
@@ -424,6 +483,53 @@ func TestProxyAppUpdateOauthToHeadersOrdersAppUpdateBeforeSetUpstreamAuth(t *tes
 			ops = append(ops, c.Op)
 		}
 		t.Fatalf("op sequence = %v, want [app_update app_set_upstream_auth] — app_update must wipe the oauth bundle first", ops)
+	}
+}
+
+// TestProxyAppUpdateSetUpstreamAuthFailureRetainsPriorAppliedVersion is Update's half of the
+// same partial-apply guard as the Create test above: headers_applied_version is §22.2's
+// convergence witness, and it must advance only after app_set_upstream_auth actually succeeds.
+// If the assignment ever moved above the err != nil check, a failed push would still persist
+// the new version — reporting false convergence and preventing any retry.
+func TestProxyAppUpdateSetUpstreamAuthFailureRetainsPriorAppliedVersion(t *testing.T) {
+	f := &fakeHub{t: t, reply: func(op string, args map[string]any) (any, *fakeRPCError) {
+		if op != "app_set_upstream_auth" {
+			t.Fatalf("a headers_version-only change must not call app_update, got %q", op)
+		}
+		return nil, &fakeRPCError{Code: -32000, Message: "upstream unreachable"}
+	}}
+	client := testClient(t, f)
+	res := NewProxyAppResource()
+	configure(t, res, client)
+
+	state := baseProxyModel()
+	state.HeadersVersion = types.Int64Value(1)
+	state.HeadersAppliedVersion = types.Int64Value(1)
+
+	plan := baseProxyModel()
+	plan.HeadersVersion = types.Int64Value(2)
+	plan.HeadersAppliedVersion = types.Int64Unknown() // ModifyPlan's mark, simulated directly
+
+	cfgModel := plan
+	cfgModel.HeadersWo = types.MapValueMust(types.StringType, map[string]attr.Value{"Authorization": types.StringValue("Bearer new")})
+
+	updateResp := &resource.UpdateResponse{State: stateFor(t, res, &state)}
+	res.Update(context.Background(), resource.UpdateRequest{
+		Plan:   planFor(t, res, &plan),
+		State:  stateFor(t, res, &state),
+		Config: configFor(t, res, &cfgModel),
+	}, updateResp)
+
+	if !updateResp.Diagnostics.HasError() {
+		t.Fatal("expected an error diagnostic when app_set_upstream_auth fails")
+	}
+
+	var got proxyAppModel
+	if diags := updateResp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if got.HeadersAppliedVersion.ValueInt64() != 1 {
+		t.Errorf("headers_applied_version = %v, want the prior witnessed value 1 retained after a failed app_set_upstream_auth", got.HeadersAppliedVersion)
 	}
 }
 

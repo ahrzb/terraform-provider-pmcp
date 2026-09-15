@@ -110,6 +110,38 @@ func (r *grantResource) ValidateConfig(ctx context.Context, req resource.Validat
 		)
 	}
 
+	// An explicitly empty set is refused even when its sibling carries roles, and the reason is
+	// a perpetual diff rather than taste. Both attributes are Optional and not Computed, so
+	// OpenTofu requires the applied state to echo the configuration exactly — and `[]` and null
+	// are different values. Read cannot tell which the operator wrote: it reconstructs both sets
+	// from the wire's flat role list, where "no allow roles" and "allow omitted" are the same
+	// absence, and stringSetFrom renders that absence as null. So `allow = []` beside a
+	// non-empty `approval` applies cleanly and then plans `null -> []` on every subsequent run,
+	// forever. Reproduced with a real `tofu plan` before this guard existed.
+	//
+	// Refusing it is the total fix: omitting the attribute says the same thing and round-trips.
+	for _, set := range []struct {
+		name  string
+		value types.Set
+		roles []string
+	}{
+		{"allow", cfg.Allow, allow},
+		{"approval", cfg.Approval, approval},
+	} {
+		if !set.value.IsNull() && len(set.roles) == 0 {
+			resp.Diagnostics.AddAttributeError(
+				path.Root(set.name),
+				"Empty role set",
+				fmt.Sprintf(
+					"`%s` is set to an empty list. Omit the attribute instead: the hub sends one "+
+						"flat role list, so a read cannot distinguish an empty set from an absent "+
+						"one, and an explicit `[]` would re-plan as a change on every run.",
+					set.name,
+				),
+			)
+		}
+	}
+
 	inAllow := make(map[string]bool, len(allow))
 	for _, role := range allow {
 		inAllow[role] = true

@@ -28,8 +28,7 @@ let
   # Terraform resource-local names allow `[A-Za-z0-9_-]`, must not start with a digit, and slugs
   # are `[a-z0-9-]+` (§22.4) — already legal except for the leading-digit case, which is why this
   # exists at all rather than using the slug verbatim.
-  resourceName =
-    slug: if builtins.match "[0-9].*" slug != null then "_${slug}" else slug;
+  resourceName = slug: if builtins.match "[0-9].*" slug != null then "_${slug}" else slug;
 
   dropNulls = lib.filterAttrs (_: v: v != null);
 
@@ -106,10 +105,12 @@ let
       description = "The upstream MCP endpoint URL the hub forwards calls to. Required.";
     };
     auth = mkOption {
-      type = types.nullOr (types.enum [
-        "headers"
-        "oauth"
-      ]);
+      type = types.nullOr (
+        types.enum [
+          "headers"
+          "oauth"
+        ]
+      );
       default = null;
       description = ''
         `headers` or `oauth`. Defaults to `headers`. Flipping this wipes any stored upstream
@@ -198,7 +199,8 @@ let
   };
 
   tunnelResources = lib.mapAttrs' (
-    slug: app: lib.nameValuePair (resourceName slug) (dropNulls (commonAppFields app // { inherit slug; }))
+    slug: app:
+    lib.nameValuePair (resourceName slug) (dropNulls (commonAppFields app // { inherit slug; }))
   ) cfg.tunnelApps;
 
   proxyResources = lib.mapAttrs' (
@@ -219,7 +221,11 @@ let
   ) cfg.proxyApps;
 
   agentResources = lib.mapAttrs' (
-    slug: agent: lib.nameValuePair (resourceName slug) (dropNulls { inherit slug; inherit (agent) name description; })
+    slug: agent:
+    lib.nameValuePair (resourceName slug) (dropNulls {
+      inherit slug;
+      inherit (agent) name description;
+    })
   ) cfg.agents;
 
   # A grant naming an undeclared app cannot be ordered against it — there would be nothing to
@@ -247,14 +253,12 @@ let
     acc
     // lib.mapAttrs' (
       appSlug: grant:
-      lib.nameValuePair "${resourceName agentSlug}_${resourceName appSlug}" (
-        dropNulls {
-          agent = agentRef agentSlug;
-          app = appRef appSlug;
-          allow = if grant.allow == [ ] then null else grant.allow;
-          approval = if grant.approval == [ ] then null else grant.approval;
-        }
-      )
+      lib.nameValuePair "${resourceName agentSlug}_${resourceName appSlug}" (dropNulls {
+        agent = agentRef agentSlug;
+        app = appRef appSlug;
+        allow = if grant.allow == [ ] then null else grant.allow;
+        approval = if grant.approval == [ ] then null else grant.approval;
+      })
     ) cfg.grants.${agentSlug}
   ) { } (builtins.attrNames cfg.grants);
 

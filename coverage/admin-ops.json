@@ -1,0 +1,731 @@
+{
+  "names": [
+    "admin_token_issue",
+    "admin_token_list",
+    "admin_token_revoke",
+    "agent_create",
+    "agent_delete",
+    "agent_list",
+    "agent_update",
+    "app_archive",
+    "app_create",
+    "app_delete",
+    "app_disconnect",
+    "app_get",
+    "app_list",
+    "app_set_upstream_auth",
+    "app_unarchive",
+    "app_update",
+    "approval_decide",
+    "approval_list",
+    "audit_query",
+    "connection_list",
+    "connection_revoke",
+    "grant_set",
+    "token_issue",
+    "token_list",
+    "token_revoke"
+  ],
+  "inputSchemas": {
+    "app_list": {
+      "type": "object",
+      "description": "List this namespace's apps, the builtin included.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "app_get": {
+      "type": "object",
+      "description": "Read one app.",
+      "properties": {
+        "slug": {
+          "description": "The app's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "app_create": {
+      "type": "object",
+      "description": "Create an app. `kind` is immutable afterwards — recreate to convert.",
+      "properties": {
+        "slug": {
+          "description": "The app's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "kind": {
+          "description": "tunnel (dials in) or proxy (the hub forwards).",
+          "type": "string",
+          "enum": [
+            "tunnel",
+            "proxy"
+          ]
+        },
+        "name": {
+          "description": "Display name; defaults to the slug.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Free-text note shown beside the app.",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "Proxied only: the upstream MCP endpoint URL.",
+          "type": "string"
+        },
+        "auth": {
+          "description": "Proxied only: which credential path this app uses.",
+          "type": "string",
+          "enum": [
+            "headers",
+            "oauth"
+          ]
+        },
+        "forward_identity": {
+          "description": "Proxied only: send X-Pmcp-* identity headers upstream (default false).",
+          "type": "boolean"
+        },
+        "roles": {
+          "description": "Proxied only: role name → tool patterns, or (§20.3) the per-family object of tool/prompt/resource patterns.",
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "capabilities": {
+          "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "tools",
+              "prompts",
+              "resources",
+              "completions"
+            ]
+          }
+        },
+        "redact": {
+          "description": "Tool-or-pattern → sensitive ARGUMENT paths.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "redact_results": {
+          "description": "Tool-or-pattern → sensitive RESULT paths.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "log_bodies": {
+          "description": "Record call bodies in the audit ledger (defaults by kind: tunneled on, proxied off).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "slug",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "app_update": {
+      "type": "object",
+      "description": "Update an app. `kind` is immutable; changing `auth` wipes stored credentials.",
+      "properties": {
+        "slug": {
+          "description": "The app's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "name": {
+          "description": "Display name; defaults to the slug.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Free-text note shown beside the app.",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "Proxied only: the upstream MCP endpoint URL.",
+          "type": "string"
+        },
+        "auth": {
+          "description": "Proxied only: which credential path this app uses.",
+          "type": "string",
+          "enum": [
+            "headers",
+            "oauth"
+          ]
+        },
+        "forward_identity": {
+          "description": "Proxied only: send X-Pmcp-* identity headers upstream (default false).",
+          "type": "boolean"
+        },
+        "roles": {
+          "description": "Proxied only: role name → tool patterns, or (§20.3) the per-family object of tool/prompt/resource patterns.",
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "capabilities": {
+          "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "tools",
+              "prompts",
+              "resources",
+              "completions"
+            ]
+          }
+        },
+        "redact": {
+          "description": "Tool-or-pattern → sensitive ARGUMENT paths.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "redact_results": {
+          "description": "Tool-or-pattern → sensitive RESULT paths.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "log_bodies": {
+          "description": "Record call bodies in the audit ledger (defaults by kind: tunneled on, proxied off).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "app_delete": {
+      "type": "object",
+      "description": "Delete an app, its grants, and its tokens. Terminal.",
+      "properties": {
+        "slug": {
+          "description": "The app's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "app_set_upstream_auth": {
+      "type": "object",
+      "description": "Store the upstream headers this proxied app is called with. Write-only.",
+      "properties": {
+        "slug": {
+          "description": "The app's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "headers": {
+          "description": "Header name → value, sealed at rest and never readable back.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "slug",
+        "headers"
+      ],
+      "additionalProperties": false
+    },
+    "app_disconnect": {
+      "type": "object",
+      "description": "Wipe an oauth-mode proxied app's stored token bundle.",
+      "properties": {
+        "slug": {
+          "description": "The app's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "app_archive": {
+      "type": "object",
+      "description": "Hide an app from consumers, retaining everything.",
+      "properties": {
+        "slug": {
+          "description": "The app's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "app_unarchive": {
+      "type": "object",
+      "description": "Make an archived app visible to consumers again.",
+      "properties": {
+        "slug": {
+          "description": "The app's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "agent_list": {
+      "type": "object",
+      "description": "List this namespace's agents and their grants.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "agent_create": {
+      "type": "object",
+      "description": "Create an agent. It holds no grants until grant_set runs.",
+      "properties": {
+        "slug": {
+          "description": "The agent's slug, unique in this namespace.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "name": {
+          "description": "Display name; defaults to the slug.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Free-text note shown beside the agent.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "agent_update": {
+      "type": "object",
+      "description": "Update an agent's display fields. `slug` is immutable.",
+      "properties": {
+        "slug": {
+          "description": "The agent's slug.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "name": {
+          "description": "Display name; defaults to the slug.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Free-text note shown beside the agent.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "agent_delete": {
+      "type": "object",
+      "description": "Delete an agent, its grants, and its tokens. Terminal.",
+      "properties": {
+        "slug": {
+          "description": "The agent's slug.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "grant_set": {
+      "type": "object",
+      "description": "Replace the full grant set for one (agent, app) pair.",
+      "properties": {
+        "agent": {
+          "description": "The agent's slug.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "app": {
+          "description": "The app's slug.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "roles": {
+          "description": "Role names, each optionally suffixed \":approval\".",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "agent",
+        "app",
+        "roles"
+      ],
+      "additionalProperties": false
+    },
+    "approval_list": {
+      "type": "object",
+      "description": "List approval requests, newest first — pending and history alike.",
+      "properties": {
+        "status": {
+          "description": "Narrow to one status.",
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "expired",
+            "used"
+          ]
+        },
+        "limit": {
+          "description": "How many rows to return (default 100).",
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "approval_decide": {
+      "type": "object",
+      "description": "Approve or reject one pending approval request.",
+      "properties": {
+        "id": {
+          "description": "The approval request's id.",
+          "type": "string"
+        },
+        "decision": {
+          "description": "approve or reject.",
+          "type": "string",
+          "enum": [
+            "approve",
+            "reject"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "decision"
+      ],
+      "additionalProperties": false
+    },
+    "token_issue": {
+      "type": "object",
+      "description": "Mint a credential. The plaintext key is shown once, here, and never again.",
+      "properties": {
+        "kind": {
+          "description": "agent (an agent's key) or app (a tunneled app's key).",
+          "type": "string",
+          "enum": [
+            "agent",
+            "app"
+          ]
+        },
+        "slug": {
+          "description": "The agent or app the key is bound to.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "expires_in": {
+          "description": "Seconds until expiry, or never. Defaults by kind: 90 days for an agent key, never for an app key.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "const": "never"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "token_list": {
+      "type": "object",
+      "description": "List this namespace's credentials. Never plaintext.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "token_revoke": {
+      "type": "object",
+      "description": "Revoke one credential. Immediate on every surface.",
+      "properties": {
+        "id": {
+          "description": "The token row's id, as token_list reports it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "admin_token_issue": {
+      "type": "object",
+      "description": "Mint a hub-admin credential from a signed-in session. Shown once, here.",
+      "properties": {
+        "expires_in": {
+          "description": "Seconds until expiry, or never. Defaults to 365 days — fixed, never sliding.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "const": "never"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "admin_token_list": {
+      "type": "object",
+      "description": "List this namespace's admin tokens. Never plaintext.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "admin_token_revoke": {
+      "type": "object",
+      "description": "Revoke one admin token. Immediate on every surface.",
+      "properties": {
+        "id": {
+          "description": "The token row's id, as admin_token_list reports it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "connection_list": {
+      "type": "object",
+      "description": "List the OAuth clients connected to this namespace.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "connection_revoke": {
+      "type": "object",
+      "description": "Revoke one OAuth connection. Immediate at the door.",
+      "properties": {
+        "id": {
+          "description": "The connection's id, as connection_list reports it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "audit_query": {
+      "type": "object",
+      "description": "Read the audit ledger, newest first.",
+      "properties": {
+        "principal": {
+          "description": "Exact principal string, e.g. agent:claude.",
+          "type": "string"
+        },
+        "app": {
+          "description": "Exact app slug.",
+          "type": "string"
+        },
+        "event": {
+          "description": "Exact event name, e.g. tools/call.",
+          "type": "string"
+        },
+        "tool": {
+          "description": "Exact unprefixed tool name.",
+          "type": "string"
+        },
+        "session": {
+          "description": "Exact client session id.",
+          "type": "string"
+        },
+        "since": {
+          "description": "Lower bound on the row timestamp, epoch ms.",
+          "type": "integer"
+        },
+        "until": {
+          "description": "Upper bound on the row timestamp, epoch ms.",
+          "type": "integer"
+        },
+        "limit": {
+          "description": "Page size (default 100).",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "Rows to skip (default 0).",
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "outputSchemas": {
+    "token_issue": {
+      "type": "object",
+      "description": "The minted credential.",
+      "properties": {
+        "id": {
+          "description": "The token row's id — what token_revoke takes.",
+          "type": "string"
+        },
+        "token": {
+          "description": "The plaintext key. Shown once; the hub stores only its SHA-256.",
+          "writeOnly": true,
+          "type": "string"
+        },
+        "prefix": {
+          "description": "The first characters, as token_list displays them.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Which credential kind was minted.",
+          "type": "string"
+        },
+        "slug": {
+          "description": "What it is bound to.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "expiresAt": {
+          "description": "Epoch ms, or null when it never expires.",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "token",
+        "prefix",
+        "kind",
+        "slug",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "admin_token_issue": {
+      "type": "object",
+      "description": "The minted admin credential.",
+      "properties": {
+        "id": {
+          "description": "The token row's id — what admin_token_revoke takes.",
+          "type": "string"
+        },
+        "token": {
+          "description": "The plaintext key. Shown once; the hub stores only its SHA-256.",
+          "writeOnly": true,
+          "type": "string"
+        },
+        "prefix": {
+          "description": "The first characters, as admin_token_list displays them.",
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "Epoch ms.",
+          "type": "integer"
+        },
+        "expiresAt": {
+          "description": "Epoch ms, or null when it never expires.",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "token",
+        "prefix",
+        "createdAt",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

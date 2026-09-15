@@ -25,18 +25,17 @@ func baseTunnelModel() tunnelAppModel {
 	}}
 }
 
-func TestTunnelAppCreateSendsKindTunnelAndNoProxyFields(t *testing.T) {
+// TestTunnelAppCreateSendsKindTunnel asserts app_create is invoked with kind = "tunnel".
+// tunnelAppModel has no endpoint/auth/forward_identity/roles/capabilities fields and
+// appendCommonArgs cannot emit them, so a loop asserting their absence from args can never
+// fail — that assertion belongs to appendCommonArgs's own field set, not here.
+func TestTunnelAppCreateSendsKindTunnel(t *testing.T) {
 	f := &fakeHub{t: t, reply: func(op string, args map[string]any) (any, *fakeRPCError) {
 		if op != "app_create" {
 			t.Fatalf("expected app_create, got %q", op)
 		}
 		if args["kind"] != "tunnel" {
 			t.Errorf(`kind = %v, want "tunnel"`, args["kind"])
-		}
-		for _, proxyOnly := range []string{"endpoint", "auth", "forward_identity", "roles", "capabilities"} {
-			if _, ok := args[proxyOnly]; ok {
-				t.Errorf("app_create for a tunnel app must not send %q", proxyOnly)
-			}
 		}
 		return map[string]any{"app": pmcp.AppRow{
 			Slug: "bot1", Kind: "tunnel", Name: "bot1", LogBodies: true,

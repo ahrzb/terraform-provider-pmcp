@@ -88,8 +88,10 @@ tofu ignores the plugin and reaches for a registry that has never heard of it.
 
 Or try it without wiring anything: `nix run github:ahrzb/terraform-provider-pmcp#tofu -- plan`.
 
-`vendorHash` is real, computed on the first Linux build; regenerate it the same way after any
-`go.mod` change — `nix build .#default -L` and take the mismatch error's `got:` line.
+`vendorHash` is real. Regenerate it with `nix build .#default -L` after any change to what the
+code **imports** — not only after a `go.mod` change, since `buildGoModule` vendors the packages
+actually imported, so a new subpackage of an already-required module moves the hash while
+`go.mod` stays byte-identical.
 
 ## What is not here yet
 
