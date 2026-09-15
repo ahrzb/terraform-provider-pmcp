@@ -371,19 +371,19 @@
     },
     "agent_update": {
       "type": "object",
-      "description": "Update an agent's display fields. `slug` is immutable.",
+      "description": "Update an agent's display fields. `slug` selects the agent and is immutable.",
       "properties": {
         "slug": {
-          "description": "The agent's slug.",
+          "description": "The agent to patch.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         },
         "name": {
-          "description": "Display name; defaults to the slug.",
+          "description": "Display name; omit to leave it unchanged.",
           "type": "string"
         },
         "description": {
-          "description": "Free-text note shown beside the agent.",
+          "description": "Free-text note shown beside the agent; omit to leave it unchanged.",
           "type": "string"
         }
       },

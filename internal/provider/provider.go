@@ -1,8 +1,9 @@
 // Package provider is the Terraform Plugin Framework provider for a personal MCP hub.
 //
-// Resources and data sources are not implemented yet; the schema and lifecycle for all four
-// resources and both data sources are specified in §22 of the hub's design spec. This file
-// carries the provider block and the configure path, which every resource will depend on.
+// Five resources and three data sources, whose schema and lifecycle rules are specified in §22
+// of the hub's design spec. This file carries the provider block, the configure path every
+// resource depends on, and the two registration lists — which are the only place a new resource
+// becomes reachable, so an implemented-but-unregistered type is the failure to look for here.
 package provider
 
 import (

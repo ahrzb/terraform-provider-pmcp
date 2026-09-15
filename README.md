@@ -5,9 +5,13 @@ calls to bots which dial in over a reverse WebSocket tunnel. This provider manag
 *contents*: apps, agents, role grants, and proxied-upstream credentials. It does not deploy the
 hub — Wrangler owns that, and the boundary is deliberate.
 
-**Status: scaffolded. The design is complete and reviewed; the resources are not implemented.**
-What exists today is the provider block, the admin transport, and its tests. See
-[What is not here yet](#what-is-not-here-yet) before opening an issue about a missing resource.
+**Status: implemented and gated.** All five resources and all three data sources are built, and
+`nix flake check` runs five checks over them — build, tests on every package (preceded by `go
+vet`), `gofmt`, the terranix schema-drift check, and the §22.5 coverage oracle. A real `tofu`
+binary plans, applies, re-plans **empty** and destroys against a fake hub in `.smoke/`.
+
+The one thing still missing is §22.8's acceptance rig against a *live* hub — see
+[What is not here yet](#what-is-not-here-yet).
 
 ## Why it exists
 
@@ -51,13 +55,26 @@ sharing the name would let one silently drive `tofu apply` until it died mid-wee
 
 ### The credential
 
-The provider authenticates with a `pmcp_adm_…` **admin token** — a credential family the hub grows
-alongside this provider. Two properties are load-bearing:
+The provider authenticates with a `pmcp_adm_…` **admin token** — a credential family the hub grew
+alongside this provider. What it is, stated the way the hub's §22.1 now states it after review
+corrected an earlier, rosier claim:
 
-- It is **narrower than a session**, not wider. An admin token administers the hub and cannot call
-  a single app tool, nor reach any browser route. A session bearer can do everything a human can.
-- It **cannot mint another admin token**, and cannot decide pending approvals. A leak therefore
-  cannot outlive revocation of the human, and cannot approve its own requests.
+- **It is a namespace-administration credential**, with the owner's authority minus two acts: it
+  cannot mint another admin token, and cannot decide pending approvals.
+- **Those two exclusions are integrity gates, not containment.** The provider's whole job is
+  `pmcp_agent`, `pmcp_grant` and `pmcp_token`, so an admin token necessarily reaches
+  `agent_create`, `grant_set` and `token_issue` — which means it can create an agent, grant it
+  every role, and issue it a never-expiring key that reaches app tools the admin token itself is
+  refused, and that outlives the admin token's revocation. An earlier draft of this README said a
+  leak "cannot outlive revocation of the human". That is false, and it is corrected here rather
+  than quietly dropped.
+- **What the narrowing genuinely buys**: no browser route, no `/api/auth/*`, no `/connect`, no
+  aggregate endpoint and no direct app tool; a fixed, non-sliding expiry where a session token
+  slides forward on use; and individual revocability and visibility, where a leaked session token
+  is a row an operator cannot name.
+
+**Revocation is not retroactive.** Revoking a leaked token stops that token; it does not undo
+what the token did. Recovery is an audit of agents, grants and tokens — not a single revoke.
 
 Mint one from a signed-in session — `pmcp admin-token issue` — and store it wherever your other
 infrastructure credentials live. Rotation is issue-then-revoke; there is no rotate operation.
@@ -93,11 +110,7 @@ code **imports** — not only after a `go.mod` change, since `buildGoModule` ven
 actually imported, so a new subpackage of an already-required module moves the hash while
 `go.mod` stays byte-identical.
 
-## What is not here yet
-
-The full schema — every attribute, mode, default, import ID and lifecycle rule — is specified in
-**§22 of the hub's design spec** (`docs/specs/provider/22-opentofu-provider.md` in the hub repo,
-which is private). Planned surface:
+## Surface
 
 | Kind | Name | Notes |
 |---|---|---|
@@ -109,8 +122,35 @@ which is private). Planned surface:
 | data source | `pmcp_app`, `pmcp_agent` | singular lookup by slug |
 | data source | `pmcp_tokens` | inventory, including tokens this provider did not issue |
 
-Also pending: the terranix module (`terranixModules.pmcp`), the coverage oracle
-(`apps.coverage-check`), and the acceptance rig (`apps.acceptance`).
+Also shipped: the terranix module (`terranixModules.pmcp`, checked against the live provider
+schema by `checks.terranix`) and the §22.5 coverage oracle (`apps.coverage-check`, gated by
+`checks.coverage-check`).
+
+## What is not here yet
+
+Everything in the table above is built. One thing is not: **§22.8's acceptance rig**
+(`apps.acceptance` plus `TestAcc*` tests), which exercises what a fake hub cannot model —
+reserved-slug refusal, the agent delete cascade, `grant_set` replace semantics, `archived` firing
+a different RPC, the §22.2 auth-flip matrix, and the `401` shapes.
+
+It is **blocked on the hub repo having no `flake.nix`**. The rig runs the hub's own Worker under
+`wrangler dev` in local mode, which means the hub must be a flake input this one can override; a
+decision ticket specified that flake and it was never built. Beyond it the rig also needs the
+hub's bootstrap route (`POST /internal/users` with a test `BOOTSTRAP_SECRET`), sign-in through
+better-auth's own JSON mount (**not** the HTML form route — the session token comes back in the
+`set-auth-token` header), a rig user that never enrols TOTP (two-factor turns sign-in into a
+redirect with no session), and `TF_ACC=1` with `TF_ACC_TERRAFORM_PATH` pointed at the nixpkgs
+`opentofu`. Every one of those hub-side pieces exists today; only the flake does not.
+
+Acceptance is deliberately an **app, not a check**: `nix flake check`'s sandbox cannot boot a
+Worker and reach it over loopback. §22.8 also owes a nightly workflow that overrides the hub
+input to `master` and records the revision, which catches behavioural drift the coverage oracle
+cannot — the oracle compares *surface*, so the hub can keep `admin-ops.json` byte-identical and
+change response semantics, ordering or auth rejection underneath it.
+
+The full schema — every attribute, mode, default, import ID and lifecycle rule — is specified in
+**§22 of the hub's design spec** (`docs/specs/provider/22-opentofu-provider.md` in the hub repo,
+which is private).
 
 Three design decisions worth knowing before contributing, because each reverses an obvious choice:
 
@@ -121,7 +161,9 @@ Three design decisions worth knowing before contributing, because each reverses 
   cannot be read back, so there is no alternative: write-only attributes cannot carry a
   *returned* value, and an ephemeral resource would re-open and orphan a credential every run.
   This is the `aws_iam_access_key` shape, and it means state encryption is a requirement rather
-  than a nicety. Tokens issued by hand are unaffected — the provider destroys only rows in its
+  than a nicety — concretely, OpenTofu's own `terraform { encryption { … } }` block, since
+  §22.2's guarantee is that the secret never lands in plaintext state. Tokens issued by hand are
+  unaffected — the provider destroys only rows in its
   own state, so ad-hoc and managed credentials coexist. Destroying a `pmcp_agent`, however,
   revokes *every* token for that agent, including ones this provider never created.
   Rotation is a replacement, and `create_before_destroy` is a guarantee rather than an accident:
