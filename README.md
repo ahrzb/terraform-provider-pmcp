@@ -88,10 +88,8 @@ tofu ignores the plugin and reaches for a registry that has never heard of it.
 
 Or try it without wiring anything: `nix run github:ahrzb/terraform-provider-pmcp#tofu -- plan`.
 
-> **First build:** `vendorHash` in `flake.nix` is `lib.fakeHash`. The repo was scaffolded from
-> Windows, where nix cannot evaluate, so the real hash has never been computed. Run
-> `nix build .#default -L`, take the `got:` hash from the mismatch, and commit it. The build fails
-> loudly until then, which beats a hash that looks real and is not.
+`vendorHash` is real, computed on the first Linux build; regenerate it the same way after any
+`go.mod` change — `nix build .#default -L` and take the mismatch error's `got:` line.
 
 ## What is not here yet
 
@@ -142,8 +140,16 @@ go build ./... && go test ./...   # offline: the admin client is tested against 
 nix develop                       # go, gopls, gcc, opentofu, gofumpt
 ```
 
-CI runs the Go build and tests. It will switch to `nix flake check -L`, matching the sibling
-`terraform-provider-gws` repo, once `vendorHash` is real.
+CI gates on `nix flake check -L` plus `nix build .#default -L`, matching the sibling
+`terraform-provider-gws` repo. Three checks: `build`, `gotest` (every package, preceded by
+`go vet ./...`) and `gofmt`.
+
+One trap worth knowing if you add a package or a check: `nix flake check` sees **tracked files
+only**, so a brand-new untracked test file is invisible to it and the gate passes having never
+compiled your test. `git add` first. Relatedly, the `gotest` check clears the package's
+`subPackages = [ "." ]` — inherited, it scopes the check phase to the root package, which has no
+tests, so the gate reported success while running nothing. Both failure modes are silent
+successes, which is the only kind worth documenting.
 
 ## Licence
 
