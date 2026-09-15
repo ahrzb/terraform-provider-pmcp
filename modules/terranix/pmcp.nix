@@ -273,6 +273,28 @@ let
       pmcp_grant = if grantResources == { } then null else grantResources;
     };
   };
+
+  # Every top-level Terraform-JSON block `extraConfig` might reasonably add to or extend —
+  # matching the vocabulary `shed/docs/opentofu.md` documents for terranix itself
+  # (`resource`, `data`, `output`, `provider`, `terraform`, plus `variable`/`locals`/`module`).
+  # This list must stay a Nix-level literal, not derived from `cfg.extraConfig`'s own keys: the
+  # module system resolves an option's value (here, `resource` etc.) by first asking every
+  # contributing module for the ATTRIBUTE NAMES of its `config` return, and it does that before
+  # any single option (like `extraConfig`) has been merged. Computing our returned attrNames
+  # from `cfg.extraConfig`'s shape would make that shape-discovery depend on a merge that itself
+  # depends on the same shape-discovery having already finished — `nix eval`'s "infinite
+  # recursion encountered". A fixed key list sidesteps it: the module's own returned shape never
+  # depends on `extraConfig`, only each key's *value* lazily does.
+  extraConfigKeys = [
+    "terraform"
+    "provider"
+    "resource"
+    "data"
+    "output"
+    "variable"
+    "locals"
+    "module"
+  ];
 in
 {
   options.pmcp = {
@@ -311,7 +333,7 @@ in
     };
 
     extraConfig = mkOption {
-      type = types.attrsOf types.anything;
+      type = types.attrs;
       default = { };
       description = ''
         Freeform Terraform JSON, deep-merged over the typed output last. The escape hatch for a
@@ -319,10 +341,15 @@ in
         is deliberately never typed (see the file header) — without waiting on a module release.
         Reach into an already-typed resource with e.g.
         `resource.pmcp_proxy_app.foo.headers_wo = { ... };`, matching the resource-local name
-        `pmcp.proxyApps.foo` produces.
+        `pmcp.proxyApps.foo` produces. Only the top-level blocks named in `extraConfigKeys`
+        (this file) are merged; anything else is a module update, not an `extraConfig` entry.
       '';
     };
   };
 
-  config = lib.mkIf cfg.enable (lib.recursiveUpdate typed cfg.extraConfig);
+  config = lib.mkIf cfg.enable (
+    lib.genAttrs extraConfigKeys (
+      key: lib.recursiveUpdate (typed.${key} or { }) (cfg.extraConfig.${key} or { })
+    )
+  );
 }

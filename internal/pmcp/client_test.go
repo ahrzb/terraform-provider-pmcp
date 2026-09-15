@@ -158,3 +158,35 @@ func TestAdminTrimsTrailingSlashFromOrigin(t *testing.T) {
 		t.Errorf("admin path = %q, want %q (a doubled slash would 404)", got, "/owner/mcp/pmcp")
 	}
 }
+
+// IsNotFound decides whether a resource gets deleted from state, and the hub gives absence no
+// wire code of its own — it arrives as -32602, the same code as a malformed slug or a failed
+// validation. So the predicate reads the message, and these are the messages it must tell apart.
+//
+// The row that earns this test is "no such namespace" (server/src/admin.ts:478). It begins the
+// same way as absence but means the caller's whole namespace did not resolve. Read as "gone", it
+// would remove every resource in the plan from state rather than reporting a failure — so the
+// predicate requires BOTH the prefix and "in this namespace", and simplifying it to a prefix
+// check is the plausible future edit this test exists to stop.
+func TestIsNotFoundTellsAbsenceFromOtherInvalidParams(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"absent app", &RPCError{Code: -32602, Message: "no such app in this namespace"}, true},
+		{"absent agent", &RPCError{Code: -32602, Message: "no such agent in this namespace"}, true},
+		{"absent token", &RPCError{Code: -32602, Message: "no such token in this namespace"}, true},
+		{"sentinel", ErrNotFound, true},
+		{"unresolved namespace", &RPCError{Code: -32602, Message: "no such namespace"}, false},
+		{"reserved slug", &RPCError{Code: -32602, Message: "slug is reserved"}, false},
+		{"joined violations", &RPCError{Code: -32602, Message: "endpoint must be https; roles: pattern does not compile"}, false},
+		{"archived", &RPCError{Code: -32002, Message: "app archived"}, false},
+		{"method not found", &RPCError{Code: -32601, Message: "unknown tool: agent_update"}, false},
+		{"transport", &HTTPError{Status: 502, Body: "bad gateway"}, false},
+	} {
+		if got := IsNotFound(tc.err); got != tc.want {
+			t.Errorf("%s: IsNotFound(%v) = %v, want %v", tc.name, tc.err, got, tc.want)
+		}
+	}
+}
