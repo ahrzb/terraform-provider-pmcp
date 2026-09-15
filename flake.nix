@@ -21,12 +21,9 @@
           inherit version;
           src = ./.;
 
-          # BOOTSTRAP: this is a placeholder. The repo was scaffolded from Windows, where nix
-          # cannot evaluate, so the real hash has never been computed. On the first WSL/Linux
-          # build, run `nix build .#default -L`, take the `got:` hash from the mismatch error,
-          # and replace this line. Until then every nix build of this flake fails loudly —
-          # which is the intent, rather than a hash that looks real and is not.
-          vendorHash = pkgs.lib.fakeHash;
+          # Computed by `nix build .#default -L` under WSL (x86_64-linux). Regenerate the same
+          # way after any go.mod change: the mismatch error's `got:` line is the new value.
+          vendorHash = "sha256-q9Blhf+SNX+dY74Tm/qYrKFNqRFAzrhg2+vW/NF4JsU=";
 
           subPackages = [ "." ];
           # Registry providers are built by goreleaser with cgo off; matching that keeps the
