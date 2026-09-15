@@ -10,16 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - run: gofmt -l . | tee /tmp/unformatted && test ! -s /tmp/unformatted
-      - run: go build ./...
-      # Offline: the admin client is exercised against an httptest fake, so no hub and no
-      # credentials are needed here.
-      - run: go test ./... -race
-
-  # The sibling terraform-provider-gws repo gates on `nix flake check -L`, which covers the
-  # build and the Go tests in one step. This repo will switch to that once flake.nix carries a
-  # real vendorHash — today it is lib.fakeHash, so a nix job would fail for a reason unrelated
-  # to the change under test. Tracked in the README.
+      - uses: cachix/install-nix-action@v31
+      # `nix flake check` covers the build, `gofmt`, `go vet` and the Go tests; the tests are
+      # offline (the admin client is exercised against an httptest fake), so no hub and no
+      # credentials are needed here. Matches the sibling terraform-provider-gws repo.
+      - run: nix flake check -L
+      - run: nix build .#default -L

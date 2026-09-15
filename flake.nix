@@ -83,10 +83,31 @@
 
         checks = {
           build = provider;
+          # `subPackages = [ "." ]` is right for the *package* — it keeps the closure to the one
+          # plugin binary — but it also scopes the check phase, and the root package has no
+          # tests. Left inherited, this gate would report success having run nothing. Clearing
+          # it makes the check see every package; a new tested package is picked up for free.
           gotest = provider.overrideAttrs (_old: {
             name = "terraform-provider-pmcp-tests";
             doCheck = true;
+            subPackages = [ ];
+            # `go test` runs only a subset of vet. Here because the vendored module cache is
+            # already in place, so this costs nothing extra.
+            preCheck = ''
+              go vet ./...
+            '';
           });
+          # CI gates on `nix flake check` alone, so formatting has to be a check rather than a
+          # separate workflow step, or it stops being enforced at all.
+          gofmt = pkgs.runCommand "terraform-provider-pmcp-gofmt" { nativeBuildInputs = [ pkgs.go ]; } ''
+            unformatted=$(cd ${./.} && gofmt -l .)
+            if [ -n "$unformatted" ]; then
+              echo "not gofmt-clean:" >&2
+              echo "$unformatted" >&2
+              exit 1
+            fi
+            touch $out
+          '';
         };
 
         formatter = pkgs.nixfmt-tree;
