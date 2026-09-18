@@ -89,3 +89,41 @@ func rolesFromArgs(args map[string]any, key string) map[string]pmcp.RoleFamilies
 	}
 	return rolesFromAny(v)
 }
+
+// intDefault is boolDefault for the contract's integer fields: the recorder decodes every JSON
+// number as float64, and a timeout or version is small enough that the cast is lossless.
+func intDefault(args map[string]any, key string, def int64) int64 {
+	if v, ok := args[key].(float64); ok {
+		return int64(v)
+	}
+	return def
+}
+
+// typescriptAliasesFromAny converts a recorded call's `typescript_aliases` value back into the
+// row shape. It mirrors the hub's row rather than the call's: every §23.6 row reports the owner
+// configuration — `{}` when none was ever set — so an absent argument still yields an empty,
+// non-nil value, and no scenario has to model two shapes for the same field.
+func typescriptAliasesFromAny(v any) *pmcp.TypescriptAliases {
+	out := &pmcp.TypescriptAliases{}
+	raw, ok := v.(map[string]any)
+	if !ok {
+		return out
+	}
+	if s, ok := raw["service"].(string); ok {
+		out.Service = s
+	}
+	if tools, ok := raw["tools"].(map[string]any); ok {
+		out.Tools = map[string]string{}
+		for canonical, alias := range tools {
+			if a, ok := alias.(string); ok {
+				out.Tools[canonical] = a
+			}
+		}
+	}
+	return out
+}
+
+// typescriptAliasesFromArgs is typescriptAliasesFromAny keyed on one of the call's arguments.
+func typescriptAliasesFromArgs(args map[string]any, key string) *pmcp.TypescriptAliases {
+	return typescriptAliasesFromAny(args[key])
+}

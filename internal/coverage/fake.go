@@ -33,7 +33,15 @@ type rpcErrorBody struct {
 // would reject").
 type fakeHub struct {
 	contract *Contract
-	reply    func(op string, args map[string]any) (any, *rpcErrorBody)
+	// staged is coverage/staged.json's set, exactly as Check loaded it. It is what makes a
+	// provider-ahead target survive the fake's own schema validation: an op the fixture does
+	// not declare at all is not a finding when it is staged, and an undeclared staged field is
+	// skipped while its declared siblings are still type-checked. Without it the fixture's
+	// additionalProperties:false would reject the very field the staged entry declares as
+	// expected — before any of the three assertions ran (§22.5, "Validation is skipped only for
+	// declared entries; anything else unknown still fails").
+	staged Staged
+	reply  func(op string, args map[string]any) (any, *rpcErrorBody)
 
 	calls          []recordedCall
 	validationErrs []error
@@ -64,9 +72,7 @@ func (f *fakeHub) server() *httptest.Server {
 		}
 		f.calls = append(f.calls, recordedCall{Op: op, Args: args})
 
-		if node, known := f.contract.InputSchemas[op]; !known {
-			f.validationErrs = append(f.validationErrs, fmt.Errorf("%s: called by the provider but absent from the contract's inputSchemas entirely", op))
-		} else if err := validateArgs(op, node, args); err != nil {
+		if err := f.validate(op, args); err != nil {
 			f.validationErrs = append(f.validationErrs, err)
 		}
 
@@ -83,6 +89,22 @@ func (f *fakeHub) server() *httptest.Server {
 	})
 
 	return httptest.NewServer(mux)
+}
+
+// validate checks one recorded call against the contract. A staged target is exempt exactly as
+// far as the fixture has not caught up: an op the fixture does not declare passes outright, and
+// an undeclared field passes while its siblings are still checked. Once the fixture declares the
+// op or field, the fixture's schema is authoritative and validation runs normally — the staged
+// entry is then expired, which this repository's own CI enforces.
+func (f *fakeHub) validate(op string, args map[string]any) error {
+	node, known := f.contract.InputSchemas[op]
+	if !known {
+		if f.staged[op] {
+			return nil
+		}
+		return fmt.Errorf("%s: called by the provider but absent from the contract's inputSchemas entirely", op)
+	}
+	return validateArgs(op, node, args, f.staged)
 }
 
 // newTestClient starts f's server and builds a *pmcp.Client against it, in the style of

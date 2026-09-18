@@ -12,7 +12,7 @@ import (
 
 // One spelling of every conversion that crosses the framework/wire boundary, and one spelling of
 // how a hub failure becomes a diagnostic. Both exist because the alternative is per-resource
-// copies that drift: five resources each deciding what null means, or each writing its own
+// copies that drift: six resources each deciding what null means, or each writing its own
 // sentence for the same -32601.
 
 // hubDiag turns a client error into a diagnostic against the op that produced it.

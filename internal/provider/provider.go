@@ -1,6 +1,6 @@
 // Package provider is the Terraform Plugin Framework provider for a personal MCP hub.
 //
-// Five resources and three data sources, whose schema and lifecycle rules are specified in §22
+// Six resources and three data sources, whose schema and lifecycle rules are specified in §22
 // of the hub's design spec. This file carries the provider block, the configure path every
 // resource depends on, and the two registration lists — which are the only place a new resource
 // becomes reachable, so an implemented-but-unregistered type is the failure to look for here.
@@ -100,7 +100,7 @@ func (p *hubProvider) Configure(ctx context.Context, req provider.ConfigureReque
 	resp.DataSourceData = client
 }
 
-// The §22.4 surface: five resources and three data sources. `pmcp_token` is listed with the
+// The §22.4 surface: six resources and three data sources. `pmcp_token` is listed with the
 // resources it is issued against rather than beside the apps, because its lifecycle is the odd
 // one — see §22.2.
 func (p *hubProvider) Resources(_ context.Context) []func() resource.Resource {
@@ -110,6 +110,7 @@ func (p *hubProvider) Resources(_ context.Context) []func() resource.Resource {
 		NewAgentResource,
 		NewGrantResource,
 		NewTokenResource,
+		NewHubSettingsResource,
 	}
 }
 

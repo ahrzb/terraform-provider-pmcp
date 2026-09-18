@@ -32,19 +32,20 @@ type appDataSource struct {
 // capabilities are proxy-only on the wire and simply read as the zero value for a tunneled or
 // builtin app, the same way AppRow itself represents them.
 type appDataSourceModel struct {
-	Slug            types.String `tfsdk:"slug"`
-	Kind            types.String `tfsdk:"kind"`
-	Name            types.String `tfsdk:"name"`
-	Description     types.String `tfsdk:"description"`
-	Archived        types.Bool   `tfsdk:"archived"`
-	LogBodies       types.Bool   `tfsdk:"log_bodies"`
-	Redact          types.Map    `tfsdk:"redact"`
-	RedactResults   types.Map    `tfsdk:"redact_results"`
-	Endpoint        types.String `tfsdk:"endpoint"`
-	Auth            types.String `tfsdk:"auth"`
-	ForwardIdentity types.Bool   `tfsdk:"forward_identity"`
-	Roles           types.Map    `tfsdk:"roles"`
-	Capabilities    types.Set    `tfsdk:"capabilities"`
+	Slug              types.String `tfsdk:"slug"`
+	Kind              types.String `tfsdk:"kind"`
+	Name              types.String `tfsdk:"name"`
+	Description       types.String `tfsdk:"description"`
+	Archived          types.Bool   `tfsdk:"archived"`
+	LogBodies         types.Bool   `tfsdk:"log_bodies"`
+	Redact            types.Map    `tfsdk:"redact"`
+	RedactResults     types.Map    `tfsdk:"redact_results"`
+	Endpoint          types.String `tfsdk:"endpoint"`
+	Auth              types.String `tfsdk:"auth"`
+	ForwardIdentity   types.Bool   `tfsdk:"forward_identity"`
+	Roles             types.Map    `tfsdk:"roles"`
+	Capabilities      types.Set    `tfsdk:"capabilities"`
+	TypescriptAliases types.Object `tfsdk:"typescript_aliases"`
 }
 
 // roleFamiliesAttrTypes is the object shape of one role's per-family patterns — the framework
@@ -190,6 +191,23 @@ func (d *appDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, re
 					"owner never declared any, which the hub reads as tools-only — distinct " +
 					"from an explicitly empty set. Proxied apps only.",
 			},
+			"typescript_aliases": schema.SingleNestedAttribute{
+				Computed: true,
+				MarkdownDescription: "The owner's hub-local TypeScript names for this app's " +
+					"canonical service and tools (§23.6), read separately from the hub's " +
+					"resolved reservations. Empty when the owner never configured any.",
+				Attributes: map[string]schema.Attribute{
+					"service": schema.StringAttribute{
+						Computed:            true,
+						MarkdownDescription: "TypeScript name of the canonical service, or null.",
+					},
+					"tools": schema.MapAttribute{
+						Computed:            true,
+						ElementType:         types.StringType,
+						MarkdownDescription: "Canonical tool name → TypeScript name.",
+					},
+				},
+			},
 		},
 	}
 }
@@ -239,24 +257,27 @@ func (d *appDataSource) Read(ctx context.Context, req datasource.ReadRequest, re
 	}
 	capSet, diags := stringSetFrom(ctx, capabilities)
 	resp.Diagnostics.Append(diags...)
+	aliases, diags := typescriptAliasesFrom(ctx, row.TypescriptAliases)
+	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	model := appDataSourceModel{
-		Slug:            types.StringValue(row.Slug),
-		Kind:            types.StringValue(row.Kind),
-		Name:            types.StringValue(row.Name),
-		Description:     types.StringValue(row.Description),
-		Archived:        types.BoolValue(row.Archived),
-		LogBodies:       types.BoolValue(row.LogBodies),
-		Redact:          redact,
-		RedactResults:   redactResults,
-		Endpoint:        types.StringValue(row.Endpoint),
-		Auth:            types.StringValue(row.Auth),
-		ForwardIdentity: types.BoolValue(row.ForwardIdentity),
-		Roles:           roles,
-		Capabilities:    capSet,
+		Slug:              types.StringValue(row.Slug),
+		Kind:              types.StringValue(row.Kind),
+		Name:              types.StringValue(row.Name),
+		Description:       types.StringValue(row.Description),
+		Archived:          types.BoolValue(row.Archived),
+		LogBodies:         types.BoolValue(row.LogBodies),
+		Redact:            redact,
+		RedactResults:     redactResults,
+		Endpoint:          types.StringValue(row.Endpoint),
+		Auth:              types.StringValue(row.Auth),
+		ForwardIdentity:   types.BoolValue(row.ForwardIdentity),
+		Roles:             roles,
+		Capabilities:      capSet,
+		TypescriptAliases: aliases,
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
 }

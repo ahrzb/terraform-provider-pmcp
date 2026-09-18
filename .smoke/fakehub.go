@@ -20,13 +20,14 @@ import (
 )
 
 type state struct {
-	mu      sync.Mutex
-	apps    map[string]map[string]any
-	agents  map[string]map[string]any
-	grants  map[string]map[string][]string // agent -> app -> roles
-	tokens  []map[string]any
-	seq     int
-	upstrem map[string]string // slug -> last Authorization header applied
+	mu       sync.Mutex
+	apps     map[string]map[string]any
+	agents   map[string]map[string]any
+	grants   map[string]map[string][]string // agent -> app -> roles
+	tokens   []map[string]any
+	settings map[string]any // hub_settings_get/update's payload (§23.3)
+	seq      int
+	upstrem  map[string]string // slug -> last Authorization header applied
 }
 
 func main() {
@@ -34,10 +35,11 @@ func main() {
 	flag.Parse()
 
 	s := &state{
-		apps:    map[string]map[string]any{},
-		agents:  map[string]map[string]any{},
-		grants:  map[string]map[string][]string{},
-		upstrem: map[string]string{},
+		apps:     map[string]map[string]any{},
+		agents:   map[string]map[string]any{},
+		grants:   map[string]map[string][]string{},
+		settings: map[string]any{"defaultTimeoutMs": int64(30000), "maxTimeoutMs": int64(30000)},
+		upstrem:  map[string]string{},
 	}
 
 	mux := http.NewServeMux()
@@ -108,7 +110,10 @@ func (s *state) dispatch(op string, args map[string]any) (any, *rpcFault) {
 			"slug": slug, "kind": str("kind"), "name": slug, "description": "",
 			"archived": false, "logBodies": str("kind") == "tunnel",
 			"roles": map[string]any{}, "redact": map[string]any{}, "redactResults": map[string]any{},
-			"createdAt": now,
+			// §23.6 rows always carry the owner's alias configuration, `{}` when there is none —
+			// never an absent key, which the provider turns into a null attribute.
+			"typescriptAliases": map[string]any{},
+			"createdAt":         now,
 		}
 		if str("kind") == "tunnel" {
 			row["status"], row["lastSeen"] = "offline", nil
@@ -254,6 +259,18 @@ func (s *state) dispatch(op string, args map[string]any) (any, *rpcFault) {
 			out = append(out, row)
 		}
 		return map[string]any{"apps": out}, nil
+
+	// §23.3's owner-wide execution settings. The absent-row default pair is baked in at start-up,
+	// and the pair travels wrapped in `settings` — the one shape the provider decodes.
+	case "hub_settings_get":
+		return map[string]any{"settings": s.settings}, nil
+
+	case "hub_settings_update":
+		s.settings = map[string]any{
+			"defaultTimeoutMs": intArg(args, "default_timeout_ms", 30000),
+			"maxTimeoutMs":     intArg(args, "max_timeout_ms", 30000),
+		}
+		return map[string]any{"settings": s.settings}, nil
 	}
 
 	return nil, &rpcFault{code: -32601, message: "unknown tool: " + op}
@@ -281,12 +298,21 @@ func apply(row map[string]any, args map[string]any) {
 		"name": "name", "description": "description", "endpoint": "endpoint",
 		"auth": "auth", "log_bodies": "logBodies", "forward_identity": "forwardIdentity",
 		"roles": "roles", "redact": "redact", "redact_results": "redactResults",
-		"capabilities": "capabilities",
+		"capabilities": "capabilities", "typescript_aliases": "typescriptAliases",
 	} {
 		if v, ok := args[arg]; ok {
 			row[field] = v
 		}
 	}
+}
+
+// intArg reads one integer argument. The JSON decoder hands every number over as float64, and
+// these are millisecond timeouts — small enough that the cast is lossless.
+func intArg(args map[string]any, key string, def int64) int64 {
+	if v, ok := args[key].(float64); ok {
+		return int64(v)
+	}
+	return def
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -49,22 +49,25 @@ func finish(out *driverResult, f *fakeHub) driverResult {
 }
 
 // allDrivers runs every resource and data source scenario against contract, aggregating their
-// results. One failed scenario does not abort the rest — each is independent, and reporting
-// every failure in one pass is more useful than stopping at the first.
-func allDrivers(ctx context.Context, contract *Contract) (driverResult, []error) {
+// results. `staged` travels with each scenario so its fake can exempt provider-ahead targets
+// from schema validation exactly as the assertions exempt them (see fakeHub.staged). One failed
+// scenario does not abort the rest — each is independent, and reporting every failure in one
+// pass is more useful than stopping at the first.
+func allDrivers(ctx context.Context, contract *Contract, staged Staged) (driverResult, []error) {
 	var total driverResult
 	var fatal []error
-	for _, drive := range []func(context.Context, *Contract) (driverResult, error){
+	for _, drive := range []func(context.Context, *Contract, Staged) (driverResult, error){
 		driveAgent,
 		driveTunnelApp,
 		driveProxyApp,
 		driveGrant,
 		driveToken,
+		driveHubSettings,
 		driveAppDataSource,
 		driveAgentDataSource,
 		driveTokensDataSource,
 	} {
-		r, err := drive(ctx, contract)
+		r, err := drive(ctx, contract, staged)
 		if err != nil {
 			fatal = append(fatal, err)
 			continue
@@ -77,14 +80,14 @@ func allDrivers(ctx context.Context, contract *Contract) (driverResult, []error)
 }
 
 // driveAgent drives pmcp_agent through Create, Read, Update, Delete.
-func driveAgent(ctx context.Context, contract *Contract) (driverResult, error) {
+func driveAgent(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	res := provider.NewAgentResource()
 	sch := resourceSchemaOf(ctx, res)
 	ty := objectTypeOf(ctx, sch.Attributes)
 
 	var row pmcp.AgentRow
-	f := &fakeHub{contract: contract}
+	f := &fakeHub{contract: contract, staged: staged}
 	f.reply = func(op string, args map[string]any) (any, *rpcErrorBody) {
 		switch op {
 		case "agent_create":
@@ -157,14 +160,14 @@ func driveAgent(ctx context.Context, contract *Contract) (driverResult, error) {
 
 // driveTunnelApp drives pmcp_tunnel_app through Create (with archived=true, exercising
 // app_archive in the same apply), Read, Update (flipping back to unarchived), Delete.
-func driveTunnelApp(ctx context.Context, contract *Contract) (driverResult, error) {
+func driveTunnelApp(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	res := provider.NewTunnelAppResource()
 	sch := resourceSchemaOf(ctx, res)
 	ty := objectTypeOf(ctx, sch.Attributes)
 
 	var row pmcp.AppRow
-	f := &fakeHub{contract: contract}
+	f := &fakeHub{contract: contract, staged: staged}
 	f.reply = func(op string, args map[string]any) (any, *rpcErrorBody) {
 		switch op {
 		case "app_create":
@@ -269,14 +272,17 @@ func driveTunnelApp(ctx context.Context, contract *Contract) (driverResult, erro
 // what ModifyPlan would have produced, §22.2 — rather than invoking ModifyPlan itself), Delete.
 // archived stays false throughout: pmcp_tunnel_app's scenario already covers app_archive/
 // app_unarchive, and keeping this one at two ops keeps its per-path expectation legible.
-func driveProxyApp(ctx context.Context, contract *Contract) (driverResult, error) {
+// `typescript_aliases` rides both the create and the update plan, and its value changes between
+// them, so §22.4's owner-alias field is recorded from a real call in both directions instead of
+// only through the resource unit tests.
+func driveProxyApp(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	res := provider.NewProxyAppResource()
 	sch := resourceSchemaOf(ctx, res)
 	ty := objectTypeOf(ctx, sch.Attributes)
 
 	var row pmcp.AppRow
-	f := &fakeHub{contract: contract}
+	f := &fakeHub{contract: contract, staged: staged}
 	f.reply = func(op string, args map[string]any) (any, *rpcErrorBody) {
 		switch op {
 		case "app_create":
@@ -286,8 +292,9 @@ func driveProxyApp(ctx context.Context, contract *Contract) (driverResult, error
 				LogBodies: boolDefault(args, "log_bodies", false),
 				Redact:    mapListFromArgs(args, "redact"), RedactResults: mapListFromArgs(args, "redact_results"),
 				Endpoint: str(args, "endpoint"), Auth: strDefault(args, "auth", "headers"),
-				ForwardIdentity: boolDefault(args, "forward_identity", false),
-				Roles:           rolesFromArgs(args, "roles"),
+				ForwardIdentity:   boolDefault(args, "forward_identity", false),
+				Roles:             rolesFromArgs(args, "roles"),
+				TypescriptAliases: typescriptAliasesFromArgs(args, "typescript_aliases"),
 			}
 			if caps, ok := args["capabilities"]; ok {
 				c := strSlice(caps)
@@ -315,6 +322,9 @@ func driveProxyApp(ctx context.Context, contract *Contract) (driverResult, error
 			if c, ok := args["capabilities"]; ok {
 				s := strSlice(c)
 				row.Capabilities = &s
+			}
+			if a, ok := args["typescript_aliases"]; ok {
+				row.TypescriptAliases = typescriptAliasesFromAny(a)
 			}
 			return map[string]any{"app": row}, nil
 		case "app_get":
@@ -350,6 +360,10 @@ func driveProxyApp(ctx context.Context, contract *Contract) (driverResult, error
 		"capabilities":    []rawVal{"tools", "prompts"},
 		"headers_wo":      map[string]rawVal{"Authorization": "Bearer up"},
 		"headers_version": 1,
+		"typescript_aliases": map[string]rawVal{
+			"service": "news",
+			"tools":   map[string]rawVal{"get-news": "getNews"},
+		},
 	}
 	at := len(f.calls)
 	createResp := &resource.CreateResponse{State: nullResourceState(sch, ty)}
@@ -383,6 +397,10 @@ func driveProxyApp(ctx context.Context, contract *Contract) (driverResult, error
 		"capabilities":            []rawVal{"tools", "prompts"},
 		"headers_version":         1,
 		"headers_applied_version": 1,
+		"typescript_aliases": map[string]rawVal{
+			"service": "news",
+			"tools":   map[string]rawVal{"get-news": "getNews"},
+		},
 	})}
 	updateTop := map[string]rawVal{
 		"slug": "papp1", "name": "Proxy One", "description": "proxies more things",
@@ -397,6 +415,10 @@ func driveProxyApp(ctx context.Context, contract *Contract) (driverResult, error
 		"headers_wo":              map[string]rawVal{"Authorization": "Bearer up2"},
 		"headers_version":         2,
 		"headers_applied_version": unknownVal,
+		"typescript_aliases": map[string]rawVal{
+			"service": "wire",
+			"tools":   map[string]rawVal{"get-news": "headlines"},
+		},
 	}
 	at = len(f.calls)
 	updateResp := &resource.UpdateResponse{State: nullResourceState(sch, ty)}
@@ -424,7 +446,7 @@ func driveProxyApp(ctx context.Context, contract *Contract) (driverResult, error
 // driveGrant drives pmcp_grant through Create, Read, Update, Delete against a proxy app that
 // declares the roles this scenario grants, so §22.4's undeclared-role check (an error on a
 // proxy app) never fires.
-func driveGrant(ctx context.Context, contract *Contract) (driverResult, error) {
+func driveGrant(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	res := provider.NewGrantResource()
 	sch := resourceSchemaOf(ctx, res)
@@ -436,7 +458,7 @@ func driveGrant(ctx context.Context, contract *Contract) (driverResult, error) {
 	}}
 	agentGrants := map[string][]string{"papp1": {"reader", "writer:approval"}}
 
-	f := &fakeHub{contract: contract}
+	f := &fakeHub{contract: contract, staged: staged}
 	f.reply = func(op string, args map[string]any) (any, *rpcErrorBody) {
 		switch op {
 		case "app_get":
@@ -506,14 +528,14 @@ func driveGrant(ctx context.Context, contract *Contract) (driverResult, error) {
 
 // driveToken drives pmcp_token through Create, Read, Update (no RPC — every configurable
 // attribute is RequiresReplace, §22.2), Delete.
-func driveToken(ctx context.Context, contract *Contract) (driverResult, error) {
+func driveToken(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	res := provider.NewTokenResource()
 	sch := resourceSchemaOf(ctx, res)
 	ty := objectTypeOf(ctx, sch.Attributes)
 
 	var issued pmcp.TokenRow
-	f := &fakeHub{contract: contract}
+	f := &fakeHub{contract: contract, staged: staged}
 	f.reply = func(op string, args map[string]any) (any, *rpcErrorBody) {
 		switch op {
 		case "token_issue":
@@ -577,13 +599,93 @@ func driveToken(ctx context.Context, contract *Contract) (driverResult, error) {
 	return finish(&out, f), nil
 }
 
-func driveAppDataSource(ctx context.Context, contract *Contract) (driverResult, error) {
+// driveHubSettings drives pmcp_hub_settings — §23.3's owner singleton — through Create, Read,
+// Update, Delete. Its per-path expectation is the interesting half: Read is the only path that
+// calls `hub_settings_get`, and Delete writes the pinned default pair through the same
+// `hub_settings_update` op Create and Update use, because no delete-shaped op exists for the
+// fixture to reach.
+func driveHubSettings(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
+	var out driverResult
+	res := provider.NewHubSettingsResource()
+	sch := resourceSchemaOf(ctx, res)
+	ty := objectTypeOf(ctx, sch.Attributes)
+
+	saved := pmcp.HubSettings{DefaultTimeoutMs: 30000, MaxTimeoutMs: 30000}
+	f := &fakeHub{contract: contract, staged: staged}
+	f.reply = func(op string, args map[string]any) (any, *rpcErrorBody) {
+		switch op {
+		case "hub_settings_get":
+			return map[string]any{"settings": saved}, nil
+		case "hub_settings_update":
+			saved = pmcp.HubSettings{
+				DefaultTimeoutMs: intDefault(args, "default_timeout_ms", saved.DefaultTimeoutMs),
+				MaxTimeoutMs:     intDefault(args, "max_timeout_ms", saved.MaxTimeoutMs),
+			}
+			return map[string]any{"settings": saved}, nil
+		default:
+			return nil, &rpcErrorBody{Code: -32601, Message: "unexpected op " + op}
+		}
+	}
+	client, closeFn, err := newTestClient(ctx, f)
+	if err != nil {
+		return out, err
+	}
+	defer closeFn()
+	if err := configureResource(ctx, res, client); err != nil {
+		return out, err
+	}
+
+	at := len(f.calls)
+	createPlan := tfsdk.Plan{Schema: sch, Raw: buildValue(ty, map[string]rawVal{
+		"default_timeout_ms": 45000, "max_timeout_ms": 120000,
+	})}
+	createResp := &resource.CreateResponse{State: nullResourceState(sch, ty)}
+	res.Create(ctx, resource.CreateRequest{Plan: createPlan}, createResp)
+	if createResp.Diagnostics.HasError() {
+		return out, fmt.Errorf("pmcp_hub_settings Create: %v", createResp.Diagnostics)
+	}
+	out.Expectations = append(out.Expectations, pathExpectation{Path: "pmcp_hub_settings/Create", WantOps: []string{"hub_settings_update"}, GotOps: opsSince(f, at)})
+
+	at = len(f.calls)
+	readState := tfsdk.State{Schema: sch, Raw: buildValue(ty, map[string]rawVal{
+		"owner_id": "owner", "default_timeout_ms": 45000, "max_timeout_ms": 120000,
+	})}
+	readResp := &resource.ReadResponse{State: readState}
+	res.Read(ctx, resource.ReadRequest{State: readState}, readResp)
+	if readResp.Diagnostics.HasError() {
+		return out, fmt.Errorf("pmcp_hub_settings Read: %v", readResp.Diagnostics)
+	}
+	out.Expectations = append(out.Expectations, pathExpectation{Path: "pmcp_hub_settings/Read", WantOps: []string{"hub_settings_get"}, GotOps: opsSince(f, at)})
+
+	at = len(f.calls)
+	updatePlan := tfsdk.Plan{Schema: sch, Raw: buildValue(ty, map[string]rawVal{
+		"owner_id": "owner", "default_timeout_ms": 60000, "max_timeout_ms": 180000,
+	})}
+	updateResp := &resource.UpdateResponse{State: nullResourceState(sch, ty)}
+	res.Update(ctx, resource.UpdateRequest{Plan: updatePlan, State: readState}, updateResp)
+	if updateResp.Diagnostics.HasError() {
+		return out, fmt.Errorf("pmcp_hub_settings Update: %v", updateResp.Diagnostics)
+	}
+	out.Expectations = append(out.Expectations, pathExpectation{Path: "pmcp_hub_settings/Update", WantOps: []string{"hub_settings_update"}, GotOps: opsSince(f, at)})
+
+	at = len(f.calls)
+	deleteResp := &resource.DeleteResponse{State: readState}
+	res.Delete(ctx, resource.DeleteRequest{State: readState}, deleteResp)
+	if deleteResp.Diagnostics.HasError() {
+		return out, fmt.Errorf("pmcp_hub_settings Delete: %v", deleteResp.Diagnostics)
+	}
+	out.Expectations = append(out.Expectations, pathExpectation{Path: "pmcp_hub_settings/Delete", WantOps: []string{"hub_settings_update"}, GotOps: opsSince(f, at)})
+
+	return finish(&out, f), nil
+}
+
+func driveAppDataSource(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	ds := provider.NewAppDataSource()
 	sch := dataSourceSchemaOf(ctx, ds)
 	ty := objectTypeOf(ctx, sch.Attributes)
 
-	f := &fakeHub{contract: contract}
+	f := &fakeHub{contract: contract, staged: staged}
 	f.reply = func(op string, args map[string]any) (any, *rpcErrorBody) {
 		if op != "app_get" {
 			return nil, &rpcErrorBody{Code: -32601, Message: "unexpected op " + op}
@@ -610,13 +712,13 @@ func driveAppDataSource(ctx context.Context, contract *Contract) (driverResult, 
 	return finish(&out, f), nil
 }
 
-func driveAgentDataSource(ctx context.Context, contract *Contract) (driverResult, error) {
+func driveAgentDataSource(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	ds := provider.NewAgentDataSource()
 	sch := dataSourceSchemaOf(ctx, ds)
 	ty := objectTypeOf(ctx, sch.Attributes)
 
-	f := &fakeHub{contract: contract}
+	f := &fakeHub{contract: contract, staged: staged}
 	f.reply = func(op string, _ map[string]any) (any, *rpcErrorBody) {
 		if op != "agent_list" {
 			return nil, &rpcErrorBody{Code: -32601, Message: "unexpected op " + op}
@@ -643,13 +745,13 @@ func driveAgentDataSource(ctx context.Context, contract *Contract) (driverResult
 	return finish(&out, f), nil
 }
 
-func driveTokensDataSource(ctx context.Context, contract *Contract) (driverResult, error) {
+func driveTokensDataSource(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	ds := provider.NewTokensDataSource()
 	sch := dataSourceSchemaOf(ctx, ds)
 	ty := objectTypeOf(ctx, sch.Attributes)
 
-	f := &fakeHub{contract: contract}
+	f := &fakeHub{contract: contract, staged: staged}
 	f.reply = func(op string, _ map[string]any) (any, *rpcErrorBody) {
 		if op != "token_list" {
 			return nil, &rpcErrorBody{Code: -32601, Message: "unexpected op " + op}
