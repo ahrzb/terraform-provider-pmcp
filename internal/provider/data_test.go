@@ -56,6 +56,52 @@ func TestAppDataSourceBuiltinSlugErrors(t *testing.T) {
 	}
 }
 
+// TestAppDataSourceExposesOwnerAliases covers §22.4's read duty for the alias attribute: the
+// data source surfaces the owner's hub-local names from app_get's `typescriptAliases`, in the
+// same typed object shape the resources use, so a consumer can read what a program would call
+// without the hub's resolved reservations leaking into the typed surface.
+func TestAppDataSourceExposesOwnerAliases(t *testing.T) {
+	ctx := context.Background()
+	client := ptFakeHub(t, func(op string, _ map[string]any) (any, *ptRPCError) {
+		if op != "app_get" {
+			t.Fatalf("expected app_get, got %q", op)
+		}
+		return map[string]any{"app": map[string]any{
+			"slug": "app1", "kind": "tunnel", "name": "app1",
+			"typescriptAliases": map[string]any{
+				"service": "tools",
+				"tools":   map[string]any{"paper_list": "paperList"},
+			},
+			"typescriptReservations": map[string]any{"service": "tools"},
+		}}, nil
+	})
+
+	d := &appDataSource{client: client}
+	var schemaResp datasource.SchemaResponse
+	d.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
+
+	objType := schemaResp.Schema.Type().TerraformType(ctx).(tftypes.Object)
+	resp := &datasource.ReadResponse{State: tfsdk.State{
+		Schema: schemaResp.Schema,
+		Raw:    tftypes.NewValue(objType, nil),
+	}}
+	d.Read(ctx, datasource.ReadRequest{Config: ptConfigWithSlug(ctx, schemaResp.Schema, "app1")}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %v", resp.Diagnostics)
+	}
+
+	var got appDataSourceModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		t.Fatalf("State.Get: %v", diags)
+	}
+	if got.TypescriptAliases.IsNull() {
+		t.Fatal("typescript_aliases must carry the owner configuration, not null")
+	}
+	if !got.TypescriptAliases.Equal(ownerAliases("tools", map[string]string{"paper_list": "paperList"})) {
+		t.Errorf("typescript_aliases = %v, want the row's owner configuration", got.TypescriptAliases)
+	}
+}
+
 // TestTokensDataSourceSchemaOmitsLastUsedAt covers §22.4's explicit carve-out: last_used_at
 // changes on every use, so including it in pmcp_tokens would make the data source dirty on
 // refreshes unrelated to configuration. This pins the omission directly against the schema

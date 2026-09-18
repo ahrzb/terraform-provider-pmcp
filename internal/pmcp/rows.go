@@ -41,6 +41,25 @@ func (r *RoleFamilies) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// TypescriptAliases is one app's owner-set hub-local naming configuration (§23.6): the
+// TypeScript names this owner wants for the app's canonical service and tools, so generated
+// declarations and the in-program proxy can address them without renaming anything on the MCP
+// wire — canonical names still cross every upstream boundary unchanged.
+//
+// The shape is shared with `hub/register`'s optional SDK hint, but the two lanes are separate
+// and this one is authoritative: `app_create`/`app_update` send it as `typescript_aliases`, and
+// `app_get` returns the owner configuration under `typescriptAliases`. Omission on a write
+// means "leave established assignments alone" (§23.6), never "clear" — there is no release
+// operation, and a deliberate change tombstones the old name rather than reusing it.
+type TypescriptAliases struct {
+	// Service is the TypeScript name of the app's canonical service. Empty means the owner
+	// set none; a write that omits it preserves whatever is established.
+	Service string `json:"service,omitempty"`
+	// Tools maps each canonical tool name to the TypeScript name this owner wants for it.
+	// Nil means the owner set none.
+	Tools map[string]string `json:"tools,omitempty"`
+}
+
 // AppRow is `app_get`/`app_list`'s row. Proxy-only fields are pointers or nil-able so that
 // "absent" survives: `Capabilities == nil` means the owner never declared any, which §20.2 reads
 // as tools-only, and is NOT the same as an empty list.
@@ -56,6 +75,11 @@ type AppRow struct {
 	RedactResults map[string][]string     `json:"redactResults"`
 	Builtin       bool                    `json:"builtin"`
 	CreatedAt     int64                   `json:"createdAt"`
+
+	// TypescriptAliases is the owner's naming configuration, nil when the row carries none.
+	// It is deliberately NOT the resolved reservation map: §23.6 keeps configuration and the
+	// hub-owned reservations apart, and only configuration round-trips through these ops.
+	TypescriptAliases *TypescriptAliases `json:"typescriptAliases"`
 
 	// Proxy only.
 	Endpoint        string    `json:"endpoint"`
@@ -296,4 +320,29 @@ func (c *Client) AppDelete(ctx context.Context, slug string) error {
 func (c *Client) AppSetUpstreamAuth(ctx context.Context, slug string, headers map[string]string) error {
 	_, err := c.Admin(ctx, "app_set_upstream_auth", map[string]any{"slug": slug, "headers": headers})
 	return err
+}
+
+// HubSettings is `hub_settings_get`/`hub_settings_update`'s payload (§23.3): the owner-wide
+// execution wall-clock pair, in milliseconds. Both are always present — an owner with no stored
+// row reads the pinned `30_000/30_000`, because absence IS that pair, not a third state.
+type HubSettings struct {
+	DefaultTimeoutMs int64 `json:"defaultTimeoutMs"`
+	MaxTimeoutMs     int64 `json:"maxTimeoutMs"`
+}
+
+// HubSettingsGet reads this owner's execution settings. The op takes no arguments and always
+// answers, so there is no missing-object case for a Read path to remove state on.
+func (c *Client) HubSettingsGet(ctx context.Context) (HubSettings, error) {
+	return call[HubSettings](ctx, c, "hub_settings_get", nil, "settings")
+}
+
+// HubSettingsUpdate writes both timeouts in one atomic upsert and returns the committed pair.
+// The hub validates 1_000 <= default <= max <= 300_000 itself and refuses the whole write with
+// a payload-free -32602, so callers get the authoritative values rather than an echo of their
+// request.
+func (c *Client) HubSettingsUpdate(ctx context.Context, defaultTimeoutMs, maxTimeoutMs int64) (HubSettings, error) {
+	return call[HubSettings](ctx, c, "hub_settings_update", map[string]any{
+		"default_timeout_ms": defaultTimeoutMs,
+		"max_timeout_ms":     maxTimeoutMs,
+	}, "settings")
 }

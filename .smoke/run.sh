@@ -43,6 +43,10 @@ resource "pmcp_tunnel_app" "tools" {
   slug        = "mcp-tools"
   description = "bots that dial in"
   redact      = { "^paper_.*$" = ["credentials.token"] }
+  typescript_aliases = {
+    service = "tools"
+    tools   = { "paper_list" = "paperList" }
+  }
 }
 
 resource "pmcp_proxy_app" "notion" {
@@ -79,6 +83,11 @@ resource "pmcp_token" "tools_app" {
   lifecycle { create_before_destroy = true }
 }
 
+resource "pmcp_hub_settings" "owner" {
+  default_timeout_ms = 45000
+  max_timeout_ms     = 120000
+}
+
 data "pmcp_app" "tools" {
   slug       = pmcp_tunnel_app.tools.slug
   depends_on = [pmcp_tunnel_app.tools]
@@ -92,6 +101,7 @@ output "token_prefix" { value = pmcp_token.tools_app.prefix }
 output "token_id"     { value = pmcp_token.tools_app.id }
 output "app_kind"     { value = data.pmcp_app.tools.kind }
 output "token_count"  { value = length(data.pmcp_tokens.all.tokens) }
+output "hub_settings" { value = "${pmcp_hub_settings.owner.owner_id}:${pmcp_hub_settings.owner.default_timeout_ms}/${pmcp_hub_settings.owner.max_timeout_ms}" }
 # `nonsensitive` rather than `sensitive = true`: the assertion is what we want to read, and the
 # fact that OpenTofu demands one of the two is itself the evidence that `token` is marked
 # sensitive in the schema.

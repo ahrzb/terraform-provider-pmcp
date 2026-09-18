@@ -15,8 +15,11 @@ type stagedFile struct {
 // Staged is coverage/staged.json's `staged` list, indexed for lookup. Each entry names an op
 // (the whole op is provider-ahead-of-fixture) or `op.field` (only that field is), per §22.5:
 // "each entry names an operation or 'operation.field' this provider supports ahead of the hub's
-// fixture, with the reason." Validation — both the field-coverage and totality assertions — is
-// skipped only for a target listed here; everything else unknown still fails.
+// fixture, with the reason." A target listed here is exempt from the two assertions it would
+// otherwise fail — field coverage and totality — and, for an op or field the fixture does not
+// declare at all, from the fake's own schema validation as well (see fakeHub.staged); that
+// second half is what keeps the fixture's `additionalProperties: false` from rejecting a
+// provider-ahead field before any assertion runs. Everything else unknown still fails.
 type Staged map[string]bool
 
 // LoadStaged reads coverage/staged.json. A missing `staged` key is an empty set, not an error —

@@ -59,15 +59,26 @@ func LoadContract(path string) (*Contract, error) {
 // type-checked against its property schema. This is what keeps the oracle from drifting into
 // accepting a field the hub's own `parseInput` would reject (§22.5) — a typo'd or renamed
 // argument fails here, at the fake, rather than silently padding field coverage.
-func validateArgs(op string, node schemaNode, args map[string]any) error {
+//
+// `staged` exempts exactly one case: a field the fixture does not declare yet but
+// coverage/staged.json does. Everything else — every declared field's presence and type, and
+// every unknown field with no staged entry — still fails, which is what keeps a typo
+// distinguishable from intentional staging.
+func validateArgs(op string, node schemaNode, args map[string]any, staged Staged) error {
 	for _, req := range node.Required {
 		if _, ok := args[req]; !ok {
+			if staged[op+"."+req] {
+				continue
+			}
 			return fmt.Errorf("%s: missing required field %q", op, req)
 		}
 	}
 	for key, val := range args {
 		prop, ok := node.Properties[key]
 		if !ok {
+			if staged[op+"."+key] {
+				continue
+			}
 			return fmt.Errorf("%s: sent field %q, which is not in the contract's declared properties", op, key)
 		}
 		if err := validateValue(prop, val); err != nil {

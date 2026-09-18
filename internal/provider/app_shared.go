@@ -9,11 +9,13 @@ import (
 	"regexp"
 
 	"github.com/ahrzb/terraform-provider-pmcp/internal/pmcp"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/mapplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -25,15 +27,16 @@ import (
 // (§22.4: "The above with `log_bodies` default `false`, plus: ..."). Embedded anonymously in
 // both resources' models so the framework's reflection-based Get/Set promotes its fields —
 // getStructTags in terraform-plugin-framework's internal/reflect package supports this
-// explicitly, which is what makes one copy of these seven fields possible.
+// explicitly, which is what makes one copy of these eight fields possible.
 type commonAppModel struct {
-	Slug          types.String `tfsdk:"slug"`
-	Name          types.String `tfsdk:"name"`
-	Description   types.String `tfsdk:"description"`
-	Archived      types.Bool   `tfsdk:"archived"`
-	Redact        types.Map    `tfsdk:"redact"`
-	RedactResults types.Map    `tfsdk:"redact_results"`
-	LogBodies     types.Bool   `tfsdk:"log_bodies"`
+	Slug              types.String `tfsdk:"slug"`
+	Name              types.String `tfsdk:"name"`
+	Description       types.String `tfsdk:"description"`
+	Archived          types.Bool   `tfsdk:"archived"`
+	Redact            types.Map    `tfsdk:"redact"`
+	RedactResults     types.Map    `tfsdk:"redact_results"`
+	LogBodies         types.Bool   `tfsdk:"log_bodies"`
+	TypescriptAliases types.Object `tfsdk:"typescript_aliases"`
 }
 
 // slugPattern mirrors registry.ts's SLUG_CHARSET exactly — the constraint the hub's own tools
@@ -41,11 +44,11 @@ type commonAppModel struct {
 var slugPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // slugValidator refuses a slug that would not survive app_create/app_get anyway: the charset
-// registry.ts enforces, and the `pmcp` slug reserved for the builtin app (§22.4).
+// registry.ts enforces, plus the two virtual slugs reserved for hub-owned services.
 type slugValidator struct{}
 
 func (slugValidator) Description(context.Context) string {
-	return `must match [a-z0-9-]+ and must not be "pmcp"`
+	return `must match [a-z0-9-]+ and must not be "pmcp" or "hub"`
 }
 
 func (v slugValidator) MarkdownDescription(ctx context.Context) string { return v.Description(ctx) }
@@ -60,14 +63,18 @@ func (slugValidator) ValidateString(_ context.Context, req validator.StringReque
 			fmt.Sprintf("%q must match [a-z0-9-]+.", value))
 		return
 	}
-	if value == pmcpBuiltinSlug {
+	if value == pmcpBuiltinSlug || value == hubVirtualSlug {
 		resp.Diagnostics.AddAttributeError(req.Path, "Reserved slug",
-			`"pmcp" is reserved for the hub's own builtin app.`)
+			fmt.Sprintf("%q is reserved for a hub-owned virtual service.", value))
 	}
 }
 
-// pmcpBuiltinSlug is the hub's virtual admin app — never a real app_create target (§8/§22.4).
-const pmcpBuiltinSlug = "pmcp"
+// The two hub-owned virtual services never have app rows and therefore can never be provider
+// app resource identities.
+const (
+	pmcpBuiltinSlug = "pmcp"
+	hubVirtualSlug  = "hub"
+)
 
 // anchoredPatternKeysValidator rejects a `redact`/`redact_results` key that cannot compile as
 // an anchored pattern, mirroring registry.ts's compilePattern (`^(?:pattern)$`, with `*`
@@ -162,6 +169,7 @@ func commonAppAttributes() map[string]schema.Attribute {
 				"when omitted: `true` for a tunneled app, `false` for a proxied one.",
 			PlanModifiers: useStateForUnknownBool,
 		},
+		"typescript_aliases": typescriptAliasesAttribute(),
 	}
 }
 
@@ -173,14 +181,17 @@ func commonFromRow(ctx context.Context, row pmcp.AppRow) (commonAppModel, diag.D
 	diags.Append(d...)
 	redactResults, d2 := redactFrom(ctx, row.RedactResults)
 	diags.Append(d2...)
+	aliases, d3 := typescriptAliasesFrom(ctx, row.TypescriptAliases)
+	diags.Append(d3...)
 	return commonAppModel{
-		Slug:          types.StringValue(row.Slug),
-		Name:          types.StringValue(row.Name),
-		Description:   types.StringValue(row.Description),
-		Archived:      types.BoolValue(row.Archived),
-		Redact:        redact,
-		RedactResults: redactResults,
-		LogBodies:     types.BoolValue(row.LogBodies),
+		Slug:              types.StringValue(row.Slug),
+		Name:              types.StringValue(row.Name),
+		Description:       types.StringValue(row.Description),
+		Archived:          types.BoolValue(row.Archived),
+		Redact:            redact,
+		RedactResults:     redactResults,
+		LogBodies:         types.BoolValue(row.LogBodies),
+		TypescriptAliases: aliases,
 	}, diags
 }
 
@@ -210,6 +221,11 @@ func appendCommonArgs(ctx context.Context, args map[string]any, plan commonAppMo
 	if redactResults != nil {
 		args["redact_results"] = redactResults
 	}
+	aliases, d3 := typescriptAliasesTo(ctx, plan.TypescriptAliases)
+	diags.Append(d3...)
+	if aliases != nil {
+		args["typescript_aliases"] = *aliases
+	}
 }
 
 // commonAppChanged reports whether any field app_update patches (as opposed to the ones with
@@ -223,7 +239,8 @@ func commonAppChanged(plan, state commonAppModel) bool {
 		!plan.Description.Equal(state.Description) ||
 		!plan.Redact.Equal(state.Redact) ||
 		!plan.RedactResults.Equal(state.RedactResults) ||
-		!plan.LogBodies.Equal(state.LogBodies)
+		!plan.LogBodies.Equal(state.LogBodies) ||
+		!plan.TypescriptAliases.Equal(state.TypescriptAliases)
 }
 
 // rolesAttribute is `pmcp_proxy_app`'s `roles` (§22.4): the typed object form only, never the
@@ -288,6 +305,178 @@ func capabilitiesAttribute() schema.SetAttribute {
 			"unset, an update that changes this sends the resolved set explicitly.",
 		PlanModifiers: []planmodifier.Set{setplanmodifier.UseStateForUnknown()},
 	}
+}
+
+// typescriptAliasesAttrTypes is the object shape of `typescript_aliases`, the framework mirror
+// of pmcp.TypescriptAliases: the owner's hub-local TypeScript names for this app's canonical
+// service and tools (§23.6).
+var typescriptAliasesAttrTypes = map[string]attr.Type{
+	"service": types.StringType,
+	"tools":   types.MapType{ElemType: types.StringType},
+}
+
+// typescriptAliasesValue is typescriptAliasesAttrTypes' Go-native counterpart, driving the
+// framework's reflection-based conversion in both directions — the same device
+// roleFamiliesValue uses one file over, and for the same reason: an unset child of a configured
+// object presents as unknown during apply, and a plain Go string/map cannot represent unknown.
+type typescriptAliasesValue struct {
+	Service types.String `tfsdk:"service"`
+	Tools   types.Map    `tfsdk:"tools"`
+}
+
+// typescriptAliasesAttribute is `typescript_aliases` (§22.4): the owner's hub-local names for
+// this app's canonical service and tools, which §23.6's declarations, program proxy, and search
+// use in place of the canonical names — never upstream, where canonical names still cross the
+// wire. Both children are Optional+Computed so an unset family (or a service the hub resolved
+// rather than the operator) is representable without an inconsistent-result error; the parent
+// carries UseStateForUnknown because `app_update` has no unset, so removing the block cannot
+// mean "clear" and state keeps carrying the hub's committed value.
+func typescriptAliasesAttribute() schema.SingleNestedAttribute {
+	return schema.SingleNestedAttribute{
+		Optional: true,
+		Computed: true,
+		MarkdownDescription: "Hub-local TypeScript names for this app's canonical service " +
+			"and tools — what generated declarations and hub execution programs call. " +
+			"Upstream naming is untouched: canonical MCP names still cross the wire in both " +
+			"directions. Omission preserves established assignments (there is no unset), and " +
+			"a deliberate change tombstones the old TypeScript path rather than reusing it.",
+		PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
+		Validators:    []validator.Object{typescriptAliasesValidator{}},
+		Attributes: map[string]schema.Attribute{
+			"service": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				MarkdownDescription: "TypeScript name this app's canonical service takes in " +
+					"generated declarations and programs.",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"tools": schema.MapAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Computed:    true,
+				MarkdownDescription: "Canonical tool name → the TypeScript name this owner " +
+					"wants it to take. Canonical names are the wire's, never rewritten here.",
+				PlanModifiers: []planmodifier.Map{mapplanmodifier.UseStateForUnknown()},
+			},
+		},
+	}
+}
+
+// tsAliasPattern is §23.6's explicit-alias identifier syntax: ASCII `[A-Za-z_$][A-Za-z0-9_$]*`.
+// Length is checked separately because the bound is stated in bytes (1–128); for an ASCII-only
+// pattern bytes and characters coincide, and the pattern is what keeps that true.
+var tsAliasPattern = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+
+// tsAliasValid reports whether value is a legal explicit alias or service identifier.
+func tsAliasValid(value string) bool {
+	return len(value) >= 1 && len(value) <= 128 && tsAliasPattern.MatchString(value)
+}
+
+// typescriptAliasesValidator enforces §22.4's "plan validates shape and identifier syntax":
+// the shape is the schema's job, and this rejects a service or alias that is not a legal
+// identifier where the message can name the offending path. The rest of §23.6's rules —
+// JavaScript keywords, Object-prototype/Promise-sensitive names, and the fixed `hub`/`pmcp`/
+// `resources` members, plus every collision — stay the hub's, deliberately: reservations are
+// per-owner rows this provider cannot read, so a second copy of that policy here could only
+// drift into refusing a write the hub would accept. A refused write surfaces verbatim, and
+// `app_update` refuses an owner collision atomically on its own.
+type typescriptAliasesValidator struct{}
+
+func (typescriptAliasesValidator) Description(context.Context) string {
+	return "every name must be a legal TypeScript identifier: ASCII [A-Za-z_$][A-Za-z0-9_$]*, 1-128 bytes"
+}
+
+func (v typescriptAliasesValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (typescriptAliasesValidator) ValidateObject(_ context.Context, req validator.ObjectRequest, resp *validator.ObjectResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	attrs := req.ConfigValue.Attributes()
+
+	if service, ok := attrs["service"].(types.String); ok && !service.IsNull() && !service.IsUnknown() {
+		if !tsAliasValid(service.ValueString()) {
+			resp.Diagnostics.AddAttributeError(req.Path.AtName("service"), "Invalid TypeScript name",
+				fmt.Sprintf("%q is not a legal TypeScript identifier: it must match "+
+					"[A-Za-z_$][A-Za-z0-9_$]* and be 1-128 bytes.", service.ValueString()))
+		}
+	}
+
+	tools, ok := attrs["tools"].(types.Map)
+	if !ok || tools.IsNull() || tools.IsUnknown() {
+		return
+	}
+	for canonical, raw := range tools.Elements() {
+		alias, ok := raw.(types.String)
+		if !ok || alias.IsNull() || alias.IsUnknown() {
+			continue
+		}
+		if !tsAliasValid(alias.ValueString()) {
+			resp.Diagnostics.AddAttributeError(req.Path.AtName("tools").AtMapKey(canonical),
+				"Invalid TypeScript name",
+				fmt.Sprintf("%q (for canonical tool %q) is not a legal TypeScript identifier: "+
+					"it must match [A-Za-z_$][A-Za-z0-9_$]* and be 1-128 bytes.",
+					alias.ValueString(), canonical))
+		}
+	}
+}
+
+// typescriptAliasesTo converts the `typescript_aliases` attribute to app_create/app_update's
+// wire object. A null or unknown attribute yields nil, which callers omit from the op arguments
+// — §23.6's "omission preserves established assignments", the same convention rolesToArgs and
+// convert.go's redactTo follow. Unknown children are omitted field-by-field for the same
+// reason: a service the configuration never named must not be sent as an empty string, which
+// would be a syntax refusal rather than a no-op. A known-but-empty attribute still sends `{}`,
+// because the operator asked for something and the hub is the one that decides what it means.
+func typescriptAliasesTo(ctx context.Context, in types.Object) (*pmcp.TypescriptAliases, diag.Diagnostics) {
+	if in.IsNull() || in.IsUnknown() {
+		return nil, nil
+	}
+	attrs := in.Attributes()
+	out := &pmcp.TypescriptAliases{}
+
+	if service, ok := attrs["service"].(types.String); ok && !service.IsNull() && !service.IsUnknown() {
+		out.Service = service.ValueString()
+	}
+	if tools, ok := attrs["tools"].(types.Map); ok && !tools.IsNull() && !tools.IsUnknown() {
+		toolsOut := make(map[string]string, len(tools.Elements()))
+		if diags := tools.ElementsAs(ctx, &toolsOut, false); diags.HasError() {
+			return nil, diags
+		}
+		out.Tools = toolsOut
+	}
+	return out, nil
+}
+
+// typescriptAliasesFrom converts app_get/app_create/app_update/app_archive's `typescriptAliases`
+// back to the attribute. A nil row value (a hub that omits the key) becomes a null attribute;
+// anything else — including the `{}` every §23.6 row carries for an owner who never configured
+// any — becomes the object itself, faithfully. It is deliberately NOT normalized to null: the
+// hub reports one shape for "no configuration", and folding it into the same null that
+// "attribute absent" maps to would make an explicitly empty block inconsistent with the state
+// the framework then receives.
+func typescriptAliasesFrom(ctx context.Context, in *pmcp.TypescriptAliases) (types.Object, diag.Diagnostics) {
+	if in == nil {
+		return types.ObjectNull(typescriptAliasesAttrTypes), nil
+	}
+	service := types.StringNull()
+	if in.Service != "" {
+		service = types.StringValue(in.Service)
+	}
+	tools := types.MapNull(types.StringType)
+	if in.Tools != nil {
+		value, diags := types.MapValueFrom(ctx, types.StringType, in.Tools)
+		if diags.HasError() {
+			return types.ObjectNull(typescriptAliasesAttrTypes), diags
+		}
+		tools = value
+	}
+	return types.ObjectValueFrom(ctx, typescriptAliasesAttrTypes, typescriptAliasesValue{
+		Service: service,
+		Tools:   tools,
+	})
 }
 
 // rolesToArgs converts the `roles` attribute to app_create/app_update's wire shape. A null or

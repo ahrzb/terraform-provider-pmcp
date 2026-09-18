@@ -5,7 +5,7 @@ calls to bots which dial in over a reverse WebSocket tunnel. This provider manag
 *contents*: apps, agents, role grants, and proxied-upstream credentials. It does not deploy the
 hub — Wrangler owns that, and the boundary is deliberate.
 
-**Status: implemented and gated.** All five resources and all three data sources are built, and
+**Status: implemented and gated.** All six resources and all three data sources are built, and
 `nix flake check` runs five checks over them — build, tests on every package (preceded by `go
 vet`), `gofmt`, the terranix schema-drift check, and the §22.5 coverage oracle. A real `tofu`
 binary plans, applies, re-plans **empty** and destroys against a fake hub in `.smoke/`.
@@ -119,8 +119,15 @@ actually imported, so a new subpackage of an already-required module moves the h
 | resource | `pmcp_agent` | consumer identities |
 | resource | `pmcp_grant` | `(agent, app)` → role sets, split `allow` / `approval` |
 | resource | `pmcp_token` | app tokens and agent keys; the value is in state, see below |
+| resource | `pmcp_hub_settings` | the owner-wide execution timeout pair (singleton) |
 | data source | `pmcp_app`, `pmcp_agent` | singular lookup by slug |
 | data source | `pmcp_tokens` | inventory, including tokens this provider did not issue |
+
+Both app resources also carry optional `typescript_aliases` — the owner's hub-local TypeScript
+names for the app's canonical service and tools (§23.6). They change nothing upstream: canonical
+MCP names still cross the wire, and an omitted alias preserves whatever is established. The
+aliases a program actually sees are the hub's resolved reservations, which `app_get` reports
+separately and this provider deliberately does not fold into the attribute.
 
 Also shipped: the terranix module (`terranixModules.pmcp`, checked against the live provider
 schema by `checks.terranix`) and the §22.5 coverage oracle (`apps.coverage-check`, gated by
