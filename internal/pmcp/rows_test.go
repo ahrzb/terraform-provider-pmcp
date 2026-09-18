@@ -1,6 +1,7 @@
 package pmcp
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -44,6 +45,118 @@ func TestRoleFamiliesUnmarshalAcceptsBareListAndObject(t *testing.T) {
 				t.Errorf("Unmarshal(%s) = %+v, want %+v", tc.wire, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestAppRowDecodesOwnerAliases pins §23.6's read shape: the owner's naming configuration
+// arrives under `typescriptAliases`, spelled exactly like the wire contract, separately from the
+// hub's resolved reservations (which ride the row under their own keys and must NOT be folded
+// into this one). It is a pointer so a hub that omits the key stays distinguishable from one
+// that reports an empty object.
+func TestAppRowDecodesOwnerAliases(t *testing.T) {
+	raw := `{
+		"slug": "app1", "kind": "proxy", "name": "app1", "description": "",
+		"archived": false, "logBodies": false,
+		"roles": {}, "redact": {}, "redactResults": {}, "builtin": false, "createdAt": 0,
+		"endpoint": "", "auth": "headers", "forwardIdentity": false, "capabilities": null,
+		"typescriptAliases": {"service": "news", "tools": {"get-news": "getNews"}},
+		"typescriptReservations": {"service": "news"},
+		"typescriptDiagnostics": []
+	}`
+
+	var row AppRow
+	if err := json.Unmarshal([]byte(raw), &row); err != nil {
+		t.Fatalf("Unmarshal AppRow: %v", err)
+	}
+	if row.TypescriptAliases == nil {
+		t.Fatal("typescriptAliases decoded to nil, want the owner configuration")
+	}
+	if row.TypescriptAliases.Service != "news" {
+		t.Errorf("service = %q, want %q", row.TypescriptAliases.Service, "news")
+	}
+	if got := row.TypescriptAliases.Tools["get-news"]; got != "getNews" {
+		t.Errorf(`tools["get-news"] = %q, want %q`, got, "getNews")
+	}
+
+	var absent AppRow
+	if err := json.Unmarshal([]byte(`{"slug": "app1"}`), &absent); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if absent.TypescriptAliases != nil {
+		t.Errorf("an omitted key must decode to nil, got %+v", absent.TypescriptAliases)
+	}
+}
+
+// TestHubSettingsUpdateSendsContractArgumentNames pins the write op's argument surface: exactly
+// the contract's two snake_case integers, as JSON numbers. A string spelling would be refused by
+// the hub's own schema before the value was ever compared, and an extra key would be refused by
+// `additionalProperties: false` — both failures the provider would otherwise discover only at
+// apply time.
+func TestHubSettingsUpdateSendsContractArgumentNames(t *testing.T) {
+	f := &fake{t: t, namespace: "owner", reply: func(string) (any, *rpcErrorBody) {
+		return map[string]any{"settings": map[string]any{"defaultTimeoutMs": 45000, "maxTimeoutMs": 120000}}, nil
+	}}
+	srv := f.server()
+	defer srv.Close()
+
+	client, err := New(context.Background(), srv.URL, "pmcp_adm_test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	settings, err := client.HubSettingsUpdate(context.Background(), 45000, 120000)
+	if err != nil {
+		t.Fatalf("HubSettingsUpdate: %v", err)
+	}
+	if settings.DefaultTimeoutMs != 45000 || settings.MaxTimeoutMs != 120000 {
+		t.Errorf("settings = %+v, want the committed pair", settings)
+	}
+
+	if len(f.calls) != 1 {
+		t.Fatalf("calls = %+v, want exactly one", f.calls)
+	}
+	call := f.calls[0]
+	if call.Op != "hub_settings_update" {
+		t.Errorf("op = %q, want hub_settings_update", call.Op)
+	}
+	if len(call.Args) != 2 {
+		t.Errorf("args = %v, want exactly the contract's two fields", call.Args)
+	}
+	if got, ok := call.Args["default_timeout_ms"].(float64); !ok || got != 45000 {
+		t.Errorf("default_timeout_ms = %#v, want the number 45000", call.Args["default_timeout_ms"])
+	}
+	if got, ok := call.Args["max_timeout_ms"].(float64); !ok || got != 120000 {
+		t.Errorf("max_timeout_ms = %#v, want the number 120000", call.Args["max_timeout_ms"])
+	}
+}
+
+// TestHubSettingsGetReadsTheSettingsEnvelope covers the read op: no arguments at all (the
+// contract declares an empty object), and the payload arrives wrapped in `settings` rather than
+// at the top level.
+func TestHubSettingsGetReadsTheSettingsEnvelope(t *testing.T) {
+	f := &fake{t: t, namespace: "owner", reply: func(op string) (any, *rpcErrorBody) {
+		return map[string]any{"settings": map[string]any{"defaultTimeoutMs": 30000, "maxTimeoutMs": 30000}}, nil
+	}}
+	srv := f.server()
+	defer srv.Close()
+
+	client, err := New(context.Background(), srv.URL, "pmcp_adm_test")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	settings, err := client.HubSettingsGet(context.Background())
+	if err != nil {
+		t.Fatalf("HubSettingsGet: %v", err)
+	}
+	if settings.DefaultTimeoutMs != 30000 || settings.MaxTimeoutMs != 30000 {
+		t.Errorf("settings = %+v, want the absent-row default pair", settings)
+	}
+	if len(f.calls) != 1 || f.calls[0].Op != "hub_settings_get" {
+		t.Fatalf("calls = %+v, want one hub_settings_get", f.calls)
+	}
+	if len(f.calls[0].Args) != 0 {
+		t.Errorf("args = %v, want the contract's empty object", f.calls[0].Args)
 	}
 }
 

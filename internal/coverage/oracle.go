@@ -20,8 +20,8 @@ func (r *Result) OK() bool { return len(r.Violations) == 0 }
 
 // Check runs §22.5's parity oracle against one admin-ops.json fixture: it drives every resource
 // and data source through the fake hub (driveTunnelApp, driveProxyApp, driveAgent, driveGrant,
-// driveToken, and the three data source drivers), then checks the recording against three
-// assertions:
+// driveToken, driveHubSettings, and the three data source drivers), then checks the recording
+// against three assertions:
 //
 //  1. Per-path — each resource/action's recorded op sequence equals its declared expectation.
 //  2. Field coverage — every input field the contract declares for a reached op is present in
@@ -43,7 +43,7 @@ func Check(contractPath, stagedPath string, strict bool) (*Result, error) {
 	}
 
 	ctx := context.Background()
-	total, fatal := allDrivers(ctx, contract)
+	total, fatal := allDrivers(ctx, contract, staged)
 	if len(fatal) > 0 {
 		msgs := make([]string, len(fatal))
 		for i, e := range fatal {

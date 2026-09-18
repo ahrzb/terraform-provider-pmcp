@@ -15,13 +15,14 @@ import (
 func baseTunnelModel() tunnelAppModel {
 	emptyRedact := types.MapValueMust(types.ListType{ElemType: types.StringType}, map[string]attr.Value{})
 	return tunnelAppModel{commonAppModel: commonAppModel{
-		Slug:          types.StringValue("bot1"),
-		Name:          types.StringValue("bot1"),
-		Description:   types.StringValue(""),
-		Archived:      types.BoolValue(false),
-		Redact:        emptyRedact,
-		RedactResults: emptyRedact,
-		LogBodies:     types.BoolValue(true),
+		Slug:              types.StringValue("bot1"),
+		Name:              types.StringValue("bot1"),
+		Description:       types.StringValue(""),
+		Archived:          types.BoolValue(false),
+		Redact:            emptyRedact,
+		RedactResults:     emptyRedact,
+		LogBodies:         types.BoolValue(true),
+		TypescriptAliases: types.ObjectNull(typescriptAliasesAttrTypes),
 	}}
 }
 

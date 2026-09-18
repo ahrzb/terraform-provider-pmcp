@@ -78,13 +78,14 @@ func baseProxyModel() proxyAppModel {
 	emptyRedact := types.MapValueMust(types.ListType{ElemType: types.StringType}, map[string]attr.Value{})
 	return proxyAppModel{
 		commonAppModel: commonAppModel{
-			Slug:          types.StringValue("app1"),
-			Name:          types.StringValue("app1"),
-			Description:   types.StringValue(""),
-			Archived:      types.BoolValue(false),
-			Redact:        emptyRedact,
-			RedactResults: emptyRedact,
-			LogBodies:     types.BoolValue(false),
+			Slug:              types.StringValue("app1"),
+			Name:              types.StringValue("app1"),
+			Description:       types.StringValue(""),
+			Archived:          types.BoolValue(false),
+			Redact:            emptyRedact,
+			RedactResults:     emptyRedact,
+			LogBodies:         types.BoolValue(false),
+			TypescriptAliases: types.ObjectNull(typescriptAliasesAttrTypes),
 		},
 		Endpoint:        types.StringValue("https://upstream.example/mcp"),
 		Auth:            types.StringValue("headers"),
