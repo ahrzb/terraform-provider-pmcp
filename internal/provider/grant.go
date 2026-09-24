@@ -66,12 +66,12 @@ func (r *grantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"allow": schema.SetAttribute{
 				ElementType: types.StringType,
 				Optional:    true,
-				Description: "Role names granted without approval gating. At least one of `allow`/`approval` must be non-empty; the two must not share a role.",
+				Description: "Entries granted without approval gating: role names, or inline items `tool/<pattern>`, `prompt/<pattern>` and `resource/<uri-pattern>`, which need no declaration. At least one of `allow`/`approval` must be non-empty; the two must not share an entry.",
 			},
 			"approval": schema.SetAttribute{
 				ElementType: types.StringType,
 				Optional:    true,
-				Description: "Role names granted with approval gating (`role:approval` on the wire). At least one of `allow`/`approval` must be non-empty; the two must not share a role.",
+				Description: "Entries granted with approval gating (`entry:approval` on the wire), in `allow`'s grammar. At least one of `allow`/`approval` must be non-empty; the two must not share an entry.",
 			},
 		},
 	}
@@ -231,7 +231,8 @@ func (r *grantResource) applyGrant(ctx context.Context, model *grantResourceMode
 
 // checkDeclaredRoles is §22.4's undeclared-role rule, run at apply time after an app_get: a
 // provider cannot read a sibling resource's configuration during plan, and on first create the
-// app may not exist yet. `all` is exempt — the built-in role, never declarable. A name is
+// app may not exist yet. `all` is exempt — the built-in role, never declarable — and so is an
+// inline entry (isInlineGrantEntry), which carries its own pattern and is never a role. A name is
 // declared when it is in the app's `roles` or its `ownerRoles`: the hub's own check reads that
 // union (§20.3's effective map), so a grant on an owner role draws no warning there either.
 // Anything else undeclared warns on a tunneled app (roles arrive at connect time, so config may
@@ -249,7 +250,7 @@ func (r *grantResource) checkDeclaredRoles(ctx context.Context, appSlug string, 
 	ok := true
 	check := func(attr string, roles []string) {
 		for _, role := range roles {
-			if role == "all" {
+			if role == "all" || isInlineGrantEntry(role) {
 				continue
 			}
 			if _, declared := app.Roles[role]; declared {
@@ -272,6 +273,22 @@ func (r *grantResource) checkDeclaredRoles(ctx context.Context, appSlug string, 
 	check("allow", allow)
 	check("approval", approval)
 	return ok
+}
+
+// isInlineGrantEntry reports whether a grant entry (its `:approval` suffix already stripped) is
+// an inline item, `tool/<pattern>`, `prompt/<pattern>` or `resource/<uri-pattern>` (§8, decision
+// 31), rather than a role name. It mirrors the hub's parseGrantEntry exactly: the text before
+// the FIRST `/` must be one of the three family words, and anything else, `foo/x` included, is
+// a role name, which the hub's charset then refuses. A role name can never be an item, because
+// the role grammar has no `/`.
+//
+// The pattern itself is deliberately not checked. The hub compiles it as a JavaScript regular
+// expression, which Go's RE2 does not match (lookaround and backreferences compile there and
+// not here), so a copy of that check could refuse an entry the hub accepts. An empty or
+// uncompilable pattern is refused by grant_set itself, before anything is stored.
+func isInlineGrantEntry(entry string) bool {
+	family, _, found := strings.Cut(entry, "/")
+	return found && (family == "tool" || family == "prompt" || family == "resource")
 }
 
 // Read applies §22.4's three-way "gone" rule: the agent is absent, the agent is present with no

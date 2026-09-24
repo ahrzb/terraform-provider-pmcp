@@ -28,9 +28,10 @@ type appDataSource struct {
 	client *pmcp.Client
 }
 
-// appDataSourceModel is every field app_get returns. Endpoint/auth/forward_identity/roles/
+// appDataSourceModel is every field app_get returns. Endpoint/auth/forward_identity/
 // capabilities are proxy-only on the wire and simply read as the zero value for a tunneled or
-// builtin app, the same way AppRow itself represents them.
+// builtin app, the same way AppRow itself represents them. Roles is not: every row carries it,
+// and on a tunnel row it is the app's own declaration.
 type appDataSourceModel struct {
 	Slug              types.String `tfsdk:"slug"`
 	Kind              types.String `tfsdk:"kind"`
@@ -183,9 +184,12 @@ func (d *appDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, re
 				MarkdownDescription: "Whether caller identity is forwarded upstream. Proxied apps only; false otherwise.",
 			},
 			"roles": schema.MapAttribute{
-				Computed:            true,
-				ElementType:         types.ObjectType{AttrTypes: roleFamiliesAttrTypes},
-				MarkdownDescription: "Virtual role definitions, keyed by role name. Proxied apps only; empty otherwise.",
+				Computed:    true,
+				ElementType: types.ObjectType{AttrTypes: roleFamiliesAttrTypes},
+				MarkdownDescription: "Role definitions, keyed by role name. For a proxied app, the " +
+					"roles its owner configured; for a tunneled app, the roles the app itself " +
+					"declared when it connected, which the owner cannot write (the owner's own " +
+					"are `owner_roles`). Empty when there are none.",
 			},
 			"capabilities": schema.SetAttribute{
 				Computed:    true,
