@@ -46,6 +46,9 @@ type appDataSourceModel struct {
 	Roles             types.Map    `tfsdk:"roles"`
 	Capabilities      types.Set    `tfsdk:"capabilities"`
 	TypescriptAliases types.Object `tfsdk:"typescript_aliases"`
+	// OwnerRoles is null, not empty, for a row with no `ownerRoles` key: the hub omits it on
+	// proxied apps, which have no owner map at all.
+	OwnerRoles types.Map `tfsdk:"owner_roles"`
 }
 
 // roleFamiliesAttrTypes is the object shape of one role's per-family patterns — the framework
@@ -208,6 +211,13 @@ func (d *appDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, re
 					},
 				},
 			},
+			"owner_roles": schema.MapAttribute{
+				Computed:    true,
+				ElementType: types.ObjectType{AttrTypes: roleFamiliesAttrTypes},
+				MarkdownDescription: "The owner's own roles, keyed by role name, as " +
+					"`pmcp_tunnel_app.owner_roles` sets them. Empty when the owner defined " +
+					"none. Tunneled apps only; null otherwise.",
+			},
 		},
 	}
 }
@@ -251,6 +261,10 @@ func (d *appDataSource) Read(ctx context.Context, req datasource.ReadRequest, re
 	if err != nil {
 		resp.Diagnostics.AddError("Could not convert roles", err.Error())
 	}
+	ownerRoles, err := ownerRolesFrom(ctx, row.OwnerRoles)
+	if err != nil {
+		resp.Diagnostics.AddError("Could not convert owner_roles", err.Error())
+	}
 	var capabilities []string
 	if row.Capabilities != nil {
 		capabilities = *row.Capabilities
@@ -278,6 +292,7 @@ func (d *appDataSource) Read(ctx context.Context, req datasource.ReadRequest, re
 		Roles:             roles,
 		Capabilities:      capSet,
 		TypescriptAliases: aliases,
+		OwnerRoles:        ownerRoles,
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
 }

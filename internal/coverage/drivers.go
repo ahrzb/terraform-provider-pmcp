@@ -160,6 +160,8 @@ func driveAgent(ctx context.Context, contract *Contract, staged Staged) (driverR
 
 // driveTunnelApp drives pmcp_tunnel_app through Create (with archived=true, exercising
 // app_archive in the same apply), Read, Update (flipping back to unarchived), Delete.
+// `owner_roles` differs between the create plan and the update plan, because Update sends it
+// only when it changed; that is what lets a real call record the field in both directions.
 func driveTunnelApp(ctx context.Context, contract *Contract, staged Staged) (driverResult, error) {
 	var out driverResult
 	res := provider.NewTunnelAppResource()
@@ -176,6 +178,8 @@ func driveTunnelApp(ctx context.Context, contract *Contract, staged Staged) (dri
 				Name: strDefault(args, "name", str(args, "slug")), Description: strDefault(args, "description", ""),
 				LogBodies: boolDefault(args, "log_bodies", true),
 				Redact:    mapListFromArgs(args, "redact"), RedactResults: mapListFromArgs(args, "redact_results"),
+				// A tunnel row always carries the owner map, `{}` when none was sent.
+				OwnerRoles: rolesFromArgs(args, "owner_roles"),
 			}
 			return map[string]any{"app": row}, nil
 		case "app_update":
@@ -187,6 +191,9 @@ func driveTunnelApp(ctx context.Context, contract *Contract, staged Staged) (dri
 			}
 			if r, ok := args["redact_results"]; ok {
 				row.RedactResults = mapListFromAny(r)
+			}
+			if r, ok := args["owner_roles"]; ok {
+				row.OwnerRoles = rolesFromAny(r)
 			}
 			return map[string]any{"app": row}, nil
 		case "app_get":
@@ -218,6 +225,9 @@ func driveTunnelApp(ctx context.Context, contract *Contract, staged Staged) (dri
 		"archived": true, "log_bodies": false,
 		"redact":         map[string]rawVal{"^get_.*$": []rawVal{"path"}},
 		"redact_results": map[string]rawVal{"^get_.*$": []rawVal{"secret"}},
+		"owner_roles": map[string]rawVal{
+			"mine": map[string]rawVal{"tools": []rawVal{"get_.*"}},
+		},
 	})}
 	createResp := &resource.CreateResponse{State: nullResourceState(sch, ty)}
 	res.Create(ctx, resource.CreateRequest{Plan: createPlan}, createResp)
@@ -241,12 +251,19 @@ func driveTunnelApp(ctx context.Context, contract *Contract, staged Staged) (dri
 		"archived": true, "log_bodies": false,
 		"redact":         map[string]rawVal{"^get_.*$": []rawVal{"path"}},
 		"redact_results": map[string]rawVal{"^get_.*$": []rawVal{"secret"}},
+		"owner_roles": map[string]rawVal{
+			"mine": map[string]rawVal{"tools": []rawVal{"get_.*"}},
+		},
 	})}
 	updatePlan := tfsdk.Plan{Schema: sch, Raw: buildValue(ty, map[string]rawVal{
 		"slug": "bot1", "name": "Bot One Updated", "description": "still doing things",
 		"archived": false, "log_bodies": true,
 		"redact":         map[string]rawVal{"^set_.*$": []rawVal{"password"}},
 		"redact_results": map[string]rawVal{"^err_.*$": []rawVal{"stack"}},
+		"owner_roles": map[string]rawVal{
+			"mine": map[string]rawVal{"tools": []rawVal{"get_.*", "list_.*"}},
+			"docs": map[string]rawVal{"prompts": []rawVal{"draft_.*"}},
+		},
 	})}
 	updateResp := &resource.UpdateResponse{State: nullResourceState(sch, ty)}
 	res.Update(ctx, resource.UpdateRequest{Plan: updatePlan, State: priorState}, updateResp)

@@ -81,6 +81,14 @@ type AppRow struct {
 	// hub-owned reservations apart, and only configuration round-trips through these ops.
 	TypescriptAliases *TypescriptAliases `json:"typescriptAliases"`
 
+	// OwnerRoles is the roles the owner defined on a tunneled app (§20.3, decision 32), in the
+	// same read shape as Roles, which on a tunnel row is the app's OWN declaration. The door
+	// resolves the two as one map, the app's definition replacing the owner's for a shared
+	// name, but only this one is writable (`owner_roles`, replaced whole). Nil means the row
+	// carries no key: always so on proxied and builtin rows, and on a hub predating the
+	// field. A tunnel row with no owner roles reports `{}`, never nil.
+	OwnerRoles map[string]RoleFamilies `json:"ownerRoles"`
+
 	// Proxy only.
 	Endpoint        string    `json:"endpoint"`
 	Auth            string    `json:"auth"` // headers | oauth

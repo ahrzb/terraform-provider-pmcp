@@ -22,6 +22,8 @@
     "connection_list",
     "connection_revoke",
     "grant_set",
+    "hub_settings_get",
+    "hub_settings_update",
     "token_issue",
     "token_list",
     "token_revoke"
@@ -112,6 +114,45 @@
               }
             ]
           }
+        },
+        "owner_roles": {
+          "description": "Owner-defined roles on a tunneled app — the app's own declaration wins on a name collision.",
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "typescript_aliases": {
+          "description": "Hub-local TypeScript names for this app: `service` renames its namespace, `tools` maps canonical tool names to aliases. Omission preserves established names; a collision refuses the whole write. Never renames the upstream.",
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string"
+            },
+            "tools": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
         },
         "capabilities": {
           "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
@@ -212,6 +253,45 @@
               }
             ]
           }
+        },
+        "owner_roles": {
+          "description": "Owner-defined roles on a tunneled app — the app's own declaration wins on a name collision.",
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "typescript_aliases": {
+          "description": "Hub-local TypeScript names for this app: `service` renames its namespace, `tools` maps canonical tool names to aliases. Omission preserves established names; a collision refuses the whole write. Never renames the upstream.",
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string"
+            },
+            "tools": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
         },
         "capabilities": {
           "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
@@ -422,7 +502,7 @@
           "pattern": "^[a-z0-9-]+$"
         },
         "roles": {
-          "description": "Role names, each optionally suffixed \":approval\".",
+          "description": "Entries: a role name, or tool/<pattern>, prompt/<pattern>, resource/<uri-pattern>; each optionally suffixed \":approval\".",
           "type": "array",
           "items": {
             "type": "string"
@@ -599,6 +679,36 @@
       ],
       "additionalProperties": false
     },
+    "hub_settings_get": {
+      "type": "object",
+      "description": "Read this namespace's hub execution timeout settings.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "hub_settings_update": {
+      "type": "object",
+      "description": "Set this namespace's hub execution timeout pair. Affects new executions only.",
+      "properties": {
+        "default_timeout_ms": {
+          "description": "Default execution wall clock, milliseconds — used when a program sends no timeout_ms.",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 300000
+        },
+        "max_timeout_ms": {
+          "description": "Largest timeout_ms a program may request, milliseconds (at least default, at most the hard ceiling).",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 300000
+        }
+      },
+      "required": [
+        "default_timeout_ms",
+        "max_timeout_ms"
+      ],
+      "additionalProperties": false
+    },
     "audit_query": {
       "type": "object",
       "description": "Read the audit ledger, newest first.",
@@ -622,6 +732,22 @@
         "session": {
           "description": "Exact client session id.",
           "type": "string"
+        },
+        "outcome": {
+          "description": "Exact outcome string, e.g. ok or -32001.",
+          "type": "string"
+        },
+        "id": {
+          "description": "One row by its id, scoped to this namespace like every other read.",
+          "type": "integer"
+        },
+        "text": {
+          "description": "Case-insensitive substring over the principal, event, app, tool, session id, detail and recorded bodies.",
+          "type": "string"
+        },
+        "bodies": {
+          "description": "Include the recorded bodies (default true); false returns an args preview and a result flag instead.",
+          "type": "boolean"
         },
         "since": {
           "description": "Lower bound on the row timestamp, epoch ms.",

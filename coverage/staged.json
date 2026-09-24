@@ -24,16 +24,8 @@
     "Landing order is therefore: provider ships support with an entry here; the hub lands its",
     "fixture and implementation; this repo bumps its pin and drops the entry, in one commit.",
     "",
-    "Currently declared: §23.3's settings pair and §23.6's owner aliases. pmcp_hub_settings",
-    "reaches hub_settings_get / hub_settings_update, and both app resources send the optional",
-    "typescript_aliases object on app_create / app_update. All four are provider-ahead of the",
-    "pinned fixture until the hub's own contracts/admin-ops.json lands them and this pin is",
-    "bumped; the expiry rule above then names each entry that must go."
+    "Currently declared: nothing. The pin now includes §23.3's settings pair and §23.6's owner",
+    "aliases, the last four entries here, so the expiry rule retired them with that pin bump."
   ],
-  "staged": [
-    "app_create.typescript_aliases",
-    "app_update.typescript_aliases",
-    "hub_settings_get",
-    "hub_settings_update"
-  ]
+  "staged": []
 }

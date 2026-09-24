@@ -243,8 +243,9 @@ func commonAppChanged(plan, state commonAppModel) bool {
 		!plan.TypescriptAliases.Equal(state.TypescriptAliases)
 }
 
-// rolesAttribute is `pmcp_proxy_app`'s `roles` (§22.4): the typed object form only, never the
-// wire's bare-list sugar, which a static schema cannot express. `tools`/`prompts`/`resources`
+// rolesAttribute is `pmcp_proxy_app`'s `roles` (§22.4), and the shape ownerRolesAttribute gives a
+// tunneled app's `owner_roles`: the typed object form only, never the wire's bare-list sugar,
+// which a static schema cannot express. `tools`/`prompts`/`resources`
 // are individually optional+computed — not merely optional — so the provider may normalize an
 // explicitly empty family list away to null (matching the hub's own canonical rendering, which
 // omits an empty family entirely) without a "provider produced inconsistent result" error;

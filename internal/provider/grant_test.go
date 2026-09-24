@@ -315,6 +315,40 @@ func TestGrantCreateWarnsOnUndeclaredRoleForTunnelApp(t *testing.T) {
 	}
 }
 
+// TestGrantCreateTreatsOwnerRoleAsDeclared pins the pre-check to the hub's own rule (§20.3): a
+// name only the app's `ownerRoles` defines is declared, so granting it draws no warning — the
+// hub's setGrants draws none either, and a warning here would contradict it on every apply of
+// a configuration that manages owner roles.
+func TestGrantCreateTreatsOwnerRoleAsDeclared(t *testing.T) {
+	f := &fakeHub{t: t, reply: func(op string, args map[string]any) (any, *fakeRPCError) {
+		switch op {
+		case "app_get":
+			app := tunnelApp("app1") // the app itself declares nothing
+			app.OwnerRoles = map[string]pmcp.RoleFamilies{"mine": {Tools: []string{"get_.*"}}}
+			return map[string]any{"app": app}, nil
+		case "grant_set":
+			return pmcp.GrantSetResult{Agent: "bot", App: "app1", Roles: []string{"mine"}}, nil
+		default:
+			t.Fatalf("unexpected op %q", op)
+			return nil, nil
+		}
+	}}
+	client := testClient(t, f)
+	res := NewGrantResource()
+	configure(t, res, client)
+
+	plan := planFor(t, res, &grantResourceModel{
+		Agent: types.StringValue("bot"), App: types.StringValue("app1"),
+		Allow: mustSet(t, "mine"), Approval: types.SetNull(types.StringType),
+	})
+	createResp := &resource.CreateResponse{State: emptyState(t, res)}
+	res.Create(context.Background(), resource.CreateRequest{Plan: plan}, createResp)
+
+	if createResp.Diagnostics.HasError() || createResp.Diagnostics.WarningsCount() != 0 {
+		t.Errorf("an owner role is declared; want no diagnostics, got %v", createResp.Diagnostics)
+	}
+}
+
 func TestGrantCreateErrorsOnUndeclaredRoleForProxyApp(t *testing.T) {
 	f := &fakeHub{t: t, reply: func(op string, args map[string]any) (any, *fakeRPCError) {
 		if op != "app_get" {

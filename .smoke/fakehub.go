@@ -116,7 +116,9 @@ func (s *state) dispatch(op string, args map[string]any) (any, *rpcFault) {
 			"createdAt":         now,
 		}
 		if str("kind") == "tunnel" {
-			row["status"], row["lastSeen"] = "offline", nil
+			// §20.3's owner map is the tunnel row's alone, `{}` when there is none; a proxied
+			// row carries no key at all.
+			row["status"], row["lastSeen"], row["ownerRoles"] = "offline", nil, map[string]any{}
 		} else {
 			row["endpoint"], row["auth"], row["forwardIdentity"] = str("endpoint"), "headers", false
 		}
@@ -299,6 +301,7 @@ func apply(row map[string]any, args map[string]any) {
 		"auth": "auth", "log_bodies": "logBodies", "forward_identity": "forwardIdentity",
 		"roles": "roles", "redact": "redact", "redact_results": "redactResults",
 		"capabilities": "capabilities", "typescript_aliases": "typescriptAliases",
+		"owner_roles": "ownerRoles",
 	} {
 		if v, ok := args[arg]; ok {
 			row[field] = v

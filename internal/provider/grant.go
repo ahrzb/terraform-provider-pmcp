@@ -231,11 +231,14 @@ func (r *grantResource) applyGrant(ctx context.Context, model *grantResourceMode
 
 // checkDeclaredRoles is §22.4's undeclared-role rule, run at apply time after an app_get: a
 // provider cannot read a sibling resource's configuration during plan, and on first create the
-// app may not exist yet. `all` is exempt — the built-in role, never declarable. Anything else
-// undeclared warns on a tunneled app (roles arrive at connect time, so config may legitimately
-// lead the first connection) and errors on a proxy app (its roles live in the same config, so an
-// undeclared one is an owner mistake, not a race). Returns false if it added any error, so the
-// caller skips the grant_set write rather than sending a request already known to be wrong.
+// app may not exist yet. `all` is exempt — the built-in role, never declarable. A name is
+// declared when it is in the app's `roles` or its `ownerRoles`: the hub's own check reads that
+// union (§20.3's effective map), so a grant on an owner role draws no warning there either.
+// Anything else undeclared warns on a tunneled app (roles arrive at connect time, so config may
+// legitimately lead the first connection) and errors on a proxy app (its roles live in the same
+// config, so an undeclared one is an owner mistake, not a race). Returns false if it added any
+// error, so the caller skips the grant_set write rather than sending a request already known to
+// be wrong.
 func (r *grantResource) checkDeclaredRoles(ctx context.Context, appSlug string, allow, approval []string, diags *diag.Diagnostics) bool {
 	app, err := r.client.AppGet(ctx, appSlug)
 	if err != nil {
@@ -250,6 +253,9 @@ func (r *grantResource) checkDeclaredRoles(ctx context.Context, appSlug string, 
 				continue
 			}
 			if _, declared := app.Roles[role]; declared {
+				continue
+			}
+			if _, owned := app.OwnerRoles[role]; owned {
 				continue
 			}
 			message := fmt.Sprintf("app %q does not declare role %q.", appSlug, role)

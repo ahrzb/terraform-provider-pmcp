@@ -156,9 +156,10 @@
               };
 
               # Exercises every typed option once: both app trees, the roles bare-list sugar
-              # alongside the typed per-family form, a grant on each app kind, and `extraConfig`
-              # reaching into the already-typed proxy app to set `headers_wo` — the field this
-              # module deliberately has no `mkOption` for (§22.2, §22.7).
+              # alongside the typed per-family form (on proxy `roles` and tunnel `ownerRoles`),
+              # a grant on each app kind, and `extraConfig` reaching into the already-typed proxy
+              # app to set `headers_wo` — the field this module deliberately has no `mkOption`
+              # for (§22.2, §22.7).
               sample = {
                 pmcp.agents.bot = {
                   description = "sample agent";
@@ -166,6 +167,10 @@
                 pmcp.tunnelApps.tunnel-one = {
                   description = "tunnel sample";
                   archived = false;
+                  ownerRoles = {
+                    mine = [ "get_.*" ]; # bare-list sugar
+                    docs.prompts = [ "draft_.*" ];
+                  };
                 };
                 pmcp.proxyApps.proxy-one = {
                   endpoint = "https://upstream.example/mcp";
