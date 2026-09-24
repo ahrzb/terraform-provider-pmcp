@@ -372,6 +372,96 @@ func TestGrantCreateErrorsOnUndeclaredRoleForProxyApp(t *testing.T) {
 	}
 }
 
+// TestIsInlineGrantEntryMirrorsTheHubParser pins isInlineGrantEntry to the hub's
+// parseGrantEntry: the family word is the text before the FIRST `/`, it must be exactly one of
+// the three singular words, and the pattern after it, colons and further slashes included, is
+// the item's. An empty pattern is still an item: the hub refuses it as an invalid pattern, never
+// as an undeclared role.
+func TestIsInlineGrantEntryMirrorsTheHubParser(t *testing.T) {
+	for entry, want := range map[string]bool{
+		"tool/get_.*":            true,
+		"prompt/draft_.*":        true,
+		"resource/news://feed/*": true,
+		"tool/":                  true,
+		"reader":                 false,
+		"all":                    false,
+		"tools/get_.*":           false, // the plural is a keyspace, not an entry prefix
+		"Tool/get_.*":            false,
+		"foo/x":                  false,
+	} {
+		if got := isInlineGrantEntry(entry); got != want {
+			t.Errorf("isInlineGrantEntry(%q) = %v, want %v", entry, got, want)
+		}
+	}
+}
+
+// TestGrantCreateInlineEntriesAreNeverUndeclared covers the pre-check against §8's inline
+// grant entries. An item carries its own pattern, so the hub's setGrants never checks it
+// against the declaration, and neither may this: before, a proxy app refused
+// `tool/<pattern>` as an "Undeclared role" without calling grant_set. A bare role name beside
+// an item is still judged exactly as before, and a prefix that is not a family word is a role
+// name, as the hub parses it.
+func TestGrantCreateInlineEntriesAreNeverUndeclared(t *testing.T) {
+	items := []string{"tool/get_.*", "prompt/draft_.*"}
+	for _, tc := range []struct {
+		name         string
+		app          pmcp.AppRow
+		allow        []string
+		wantErr      bool
+		wantWarnings int
+	}{
+		{name: "items on a proxy app", app: proxyApp("app1"), allow: items},
+		{name: "items on a tunneled app", app: tunnelApp("app1"), allow: items},
+		{
+			name: "an undeclared role beside an item still errors on a proxy app",
+			app:  proxyApp("app1"), allow: append([]string{"reader"}, items...), wantErr: true,
+		},
+		{
+			name: "an undeclared role beside an item still warns on a tunneled app",
+			app:  tunnelApp("app1"), allow: append([]string{"reader"}, items...), wantWarnings: 1,
+		},
+		{
+			name: "an unknown prefix is a role name, as the hub parses it",
+			app:  proxyApp("app1"), allow: []string{"foo/x"}, wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeHub{t: t, reply: func(op string, args map[string]any) (any, *fakeRPCError) {
+				switch op {
+				case "app_get":
+					return map[string]any{"app": tc.app}, nil // declares nothing
+				case "grant_set":
+					if tc.wantErr {
+						t.Errorf("grant_set must not run after the pre-check refused the set")
+					}
+					return pmcp.GrantSetResult{Agent: "bot", App: "app1", Roles: toStrings(args["roles"].([]any))}, nil
+				default:
+					t.Fatalf("unexpected op %q", op)
+					return nil, nil
+				}
+			}}
+			client := testClient(t, f)
+			res := NewGrantResource()
+			configure(t, res, client)
+
+			plan := planFor(t, res, &grantResourceModel{
+				Agent: types.StringValue("bot"), App: types.StringValue("app1"),
+				Allow:    mustSet(t, tc.allow...),
+				Approval: mustSet(t, "resource/news://feed/*"),
+			})
+			createResp := &resource.CreateResponse{State: emptyState(t, res)}
+			res.Create(context.Background(), resource.CreateRequest{Plan: plan}, createResp)
+
+			if createResp.Diagnostics.HasError() != tc.wantErr {
+				t.Errorf("HasError = %v, want %v: %v", createResp.Diagnostics.HasError(), tc.wantErr, createResp.Diagnostics)
+			}
+			if got := createResp.Diagnostics.WarningsCount(); got != tc.wantWarnings {
+				t.Errorf("warnings = %d, want %d: %v", got, tc.wantWarnings, createResp.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestGrantCreateAllowsBuiltinAllRoleWithoutDeclaration(t *testing.T) {
 	f := &fakeHub{t: t, reply: func(op string, args map[string]any) (any, *fakeRPCError) {
 		switch op {
