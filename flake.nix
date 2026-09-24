@@ -33,7 +33,7 @@
           # subpackage of a module already in go.mod — `resource/schema/stringplanmodifier`, say
           # — moves this hash while go.mod and go.sum stay byte-identical. That is exactly how
           # this value went stale once already.
-          vendorHash = "sha256-nZqkF9Gfp5XtPCZi5+tijoDNMAaVF8GWnlllucJtUFA=";
+          vendorHash = "sha256-xSrJgsQHPYiebma0ZbEQ3M+I4nbfJWlKJ0c43s8P8Ko=";
 
           subPackages = [ "." ];
           # Registry providers are built by goreleaser with cgo off; matching that keeps the
