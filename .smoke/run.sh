@@ -43,6 +43,7 @@ resource "pmcp_tunnel_app" "tools" {
   slug        = "mcp-tools"
   description = "bots that dial in"
   redact      = { "^paper_.*$" = ["credentials.token"] }
+  owner_roles = { reader = { tools = ["paper_list"] } }
   typescript_aliases = {
     service = "tools"
     tools   = { "paper_list" = "paperList" }

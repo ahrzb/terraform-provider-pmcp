@@ -6,6 +6,7 @@ import (
 
 	dschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -99,6 +100,62 @@ func TestAppDataSourceExposesOwnerAliases(t *testing.T) {
 	}
 	if !got.TypescriptAliases.Equal(ownerAliases("tools", map[string]string{"paper_list": "paperList"})) {
 		t.Errorf("typescript_aliases = %v, want the row's owner configuration", got.TypescriptAliases)
+	}
+}
+
+// TestAppDataSourceExposesOwnerRoles covers §22.4's read duty for `owner_roles`: a tunnel row's
+// owner map arrives in the resource's typed shape, and a proxied row, which the hub sends with no
+// `ownerRoles` key, reads as null rather than an empty map that would claim an owner map exists.
+func TestAppDataSourceExposesOwnerRoles(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  map[string]any
+		want types.Map
+	}{
+		{
+			name: "tunnel row",
+			row: map[string]any{
+				"slug": "app1", "kind": "tunnel", "name": "app1",
+				"ownerRoles": map[string]any{"mine": []string{"get_.*"}},
+			},
+			want: toolRoles(map[string][]string{"mine": {"get_.*"}}),
+		},
+		{
+			name: "proxy row",
+			row:  map[string]any{"slug": "app1", "kind": "proxy", "name": "app1"},
+			want: types.MapNull(types.ObjectType{AttrTypes: roleFamiliesAttrTypes}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := ptFakeHub(t, func(op string, _ map[string]any) (any, *ptRPCError) {
+				if op != "app_get" {
+					t.Fatalf("expected app_get, got %q", op)
+				}
+				return map[string]any{"app": tc.row}, nil
+			})
+
+			d := &appDataSource{client: client}
+			var schemaResp datasource.SchemaResponse
+			d.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
+			objType := schemaResp.Schema.Type().TerraformType(ctx).(tftypes.Object)
+			resp := &datasource.ReadResponse{State: tfsdk.State{
+				Schema: schemaResp.Schema,
+				Raw:    tftypes.NewValue(objType, nil),
+			}}
+			d.Read(ctx, datasource.ReadRequest{Config: ptConfigWithSlug(ctx, schemaResp.Schema, "app1")}, resp)
+			if resp.Diagnostics.HasError() {
+				t.Fatalf("Read: %v", resp.Diagnostics)
+			}
+
+			var got appDataSourceModel
+			if diags := resp.State.Get(ctx, &got); diags.HasError() {
+				t.Fatalf("State.Get: %v", diags)
+			}
+			if !got.OwnerRoles.Equal(tc.want) {
+				t.Errorf("owner_roles = %v, want %v", got.OwnerRoles, tc.want)
+			}
+		})
 	}
 }
 

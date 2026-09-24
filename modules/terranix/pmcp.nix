@@ -156,7 +156,27 @@ let
     };
   };
 
-  tunnelAppType = types.submodule { options = commonAppOptions; };
+  # --- tunnel-only schema (§22.4's pmcp_tunnel_app.owner_roles) --------------------------------
+
+  # Tunnel-only for the reason the file header gives: the hub refuses `owner_roles` on a proxied
+  # app, whose `roles` are already the owner's. Unlike `roles`, whose empty default emits
+  # nothing, an empty set is emitted as written, because null and `{ }` mean different things
+  # to the provider: null omits the attribute and leaves the hub's owner roles unmanaged, while
+  # `{ }` clears them.
+  tunnelOnlyOptions = {
+    ownerRoles = mkOption {
+      type = types.nullOr (types.attrsOf roleType);
+      default = null;
+      description = ''
+        The owner's own roles on this app, keyed by role name; bare pattern lists are sugar for
+        `{ tools = [...]; }`. The app's own declaration wins a name collision. The set is
+        complete: apply replaces the hub's with it, so `{ }` means no owner roles. Leave it
+        null to leave the hub's owner roles alone.
+      '';
+    };
+  };
+
+  tunnelAppType = types.submodule { options = commonAppOptions // tunnelOnlyOptions; };
   proxyAppType = types.submodule { options = commonAppOptions // proxyOnlyOptions; };
 
   agentType = types.submodule {
@@ -245,7 +265,16 @@ let
 
   tunnelResources = lib.mapAttrs' (
     slug: app:
-    lib.nameValuePair (resourceName slug) (dropNulls (commonAppFields app // { inherit slug; }))
+    lib.nameValuePair (resourceName slug) (
+      dropNulls (
+        commonAppFields app
+        // {
+          inherit slug;
+          owner_roles =
+            if app.ownerRoles == null then null else lib.mapAttrs (_: normalizeRole) app.ownerRoles;
+        }
+      )
+    )
   ) cfg.tunnelApps;
 
   proxyResources = lib.mapAttrs' (
@@ -421,7 +450,7 @@ in
     tunnelApps = mkOption {
       type = types.attrsOf tunnelAppType;
       default = { };
-      description = "`pmcp_tunnel_app` resources, keyed by slug. Proxy-only fields are not options here (see the file header).";
+      description = "`pmcp_tunnel_app` resources, keyed by slug. Proxy-only fields are not options here, nor is `ownerRoles` under `proxyApps` (see the file header).";
     };
 
     proxyApps = mkOption {

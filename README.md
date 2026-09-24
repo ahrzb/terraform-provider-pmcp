@@ -114,7 +114,7 @@ actually imported, so a new subpackage of an already-required module moves the h
 
 | Kind | Name | Notes |
 |---|---|---|
-| resource | `pmcp_tunnel_app` | bots that dial in; `log_bodies` defaults true |
+| resource | `pmcp_tunnel_app` | bots that dial in; `log_bodies` defaults true; carries `owner_roles` |
 | resource | `pmcp_proxy_app` | upstream MCP endpoints; carries write-only `headers_wo` |
 | resource | `pmcp_agent` | consumer identities |
 | resource | `pmcp_grant` | `(agent, app)` → role sets, split `allow` / `approval` |
@@ -128,6 +128,17 @@ names for the app's canonical service and tools (§23.6). They change nothing up
 MCP names still cross the wire, and an omitted alias preserves whatever is established. The
 aliases a program actually sees are the hub's resolved reservations, which `app_get` reports
 separately and this provider deliberately does not fold into the attribute.
+
+`pmcp_tunnel_app` also carries optional `owner_roles`: the owner's own roles on a tunneled app
+(§20.3), in the typed per-family form `pmcp_proxy_app.roles` takes. They sit beside the roles the
+app declares when it connects, which are never an attribute; for a name both define, the app's
+definition wins whole. The value is the complete set and apply replaces the hub's with it, so
+`owner_roles = {}` clears them, while omitting the attribute leaves the hub's owner roles,
+including edits from the web UI's Roles pane, unmanaged and never sent. Removing a role that a
+`pmcp_grant` still names neither fails nor deletes the grant: the grant stays, granting nothing
+through that name until the role is defined again or the app declares it. `pmcp_proxy_app` has
+no such attribute, because the hub refuses the field on a proxied app, whose `roles` are already
+the owner's.
 
 Also shipped: the terranix module (`terranixModules.pmcp`, checked against the live provider
 schema by `checks.terranix`) and the §22.5 coverage oracle (`apps.coverage-check`, gated by

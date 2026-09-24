@@ -87,6 +87,47 @@ func TestAppRowDecodesOwnerAliases(t *testing.T) {
 	}
 }
 
+// TestAppRowDecodesOwnerRoles pins §20.3's owner map as the tunnel row carries it: under
+// `ownerRoles`, in the same canonical mixed shape as `roles`, and kept apart from `roles`, which
+// on a tunnel row is the app's own declaration. The absent case is the proxied and builtin
+// rows' (the hub omits the key there), and it must stay distinguishable from a tunnel row's `{}`.
+func TestAppRowDecodesOwnerRoles(t *testing.T) {
+	raw := `{
+		"slug": "bot1", "kind": "tunnel", "name": "bot1",
+		"roles": {"reader": ["app_tool"]},
+		"ownerRoles": {"mine": ["get_.*"], "spanning": {"prompts": ["draft_.*"]}}
+	}`
+
+	var row AppRow
+	if err := json.Unmarshal([]byte(raw), &row); err != nil {
+		t.Fatalf("Unmarshal AppRow: %v", err)
+	}
+	want := map[string]RoleFamilies{
+		"mine":     {Tools: []string{"get_.*"}},
+		"spanning": {Prompts: []string{"draft_.*"}},
+	}
+	if !reflect.DeepEqual(row.OwnerRoles, want) {
+		t.Errorf("ownerRoles = %+v, want %+v", row.OwnerRoles, want)
+	}
+	if _, leaked := row.Roles["mine"]; leaked {
+		t.Error("an owner role must not appear under roles, the app's own declaration")
+	}
+
+	var empty, absent AppRow
+	if err := json.Unmarshal([]byte(`{"slug": "bot1", "ownerRoles": {}}`), &empty); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if empty.OwnerRoles == nil {
+		t.Error("a tunnel row's `{}` must decode to an empty map, not nil")
+	}
+	if err := json.Unmarshal([]byte(`{"slug": "papp1"}`), &absent); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if absent.OwnerRoles != nil {
+		t.Errorf("an omitted key must decode to nil, got %+v", absent.OwnerRoles)
+	}
+}
+
 // TestHubSettingsUpdateSendsContractArgumentNames pins the write op's argument surface: exactly
 // the contract's two snake_case integers, as JSON numbers. A string spelling would be refused by
 // the hub's own schema before the value was ever compared, and an extra key would be refused by
